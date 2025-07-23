@@ -363,78 +363,100 @@ document.addEventListener('DOMContentLoaded', function() {
 
   // 智能替换文本内容，保留HTML结构和格式
   function replaceTextInHtml(html, originalText, translatedText) {
-    // 创建DOM解析器
-    const parser = new DOMParser()
-    const doc = parser.parseFromString(html, 'text/html')
-    
-    // 收集所有原文文本节点和翻译段落
-    const originalTexts = []
-    const translatedParagraphs = translatedText.split(/\n+/).filter(p => p.trim())
-    
-    // 第一步：收集所有原文文本节点
-    function collectTextNodes(node, textNodes = []) {
-      if (node.nodeType === Node.TEXT_NODE) {
-        const text = node.textContent.trim()
-        if (text.length > 0) {
-          textNodes.push({
-            node: node,
-            text: text,
-            fullText: node.textContent // 保留完整文本包括空白
-          })
-        }
-      } else if (node.nodeType === Node.ELEMENT_NODE) {
-        // 跳过script和style标签
-        if (!['SCRIPT', 'STYLE'].includes(node.tagName)) {
-          const children = Array.from(node.childNodes)
-          for (const child of children) {
-            collectTextNodes(child, textNodes)
+    try {
+      // 确保我们有有效的输入
+      if (!html || !translatedText) {
+        console.error('Invalid input for replaceTextInHtml')
+        return html
+      }
+      
+      // 分割翻译文本为段落
+      const translatedParagraphs = translatedText
+        .split(/\n+/)
+        .map(p => p.trim())
+        .filter(p => p.length > 0)
+      
+      // 查找body标签的位置
+      const bodyStartMatch = html.match(/<body[^>]*>/i)
+      const bodyEndIndex = html.lastIndexOf('</body>')
+      
+      if (!bodyStartMatch || bodyEndIndex === -1) {
+        console.error('No valid body tags found')
+        // 如果没有body标签，尝试直接返回带段落的内容
+        return translatedParagraphs.map(p => `<p>${p}</p>`).join('\n')
+      }
+      
+      // 提取body标签和其属性
+      const bodyTag = bodyStartMatch[0]
+      const bodyStartIndex = bodyStartMatch.index + bodyTag.length
+      
+      // 提取原始body内容
+      const originalBodyContent = html.substring(bodyStartIndex, bodyEndIndex)
+      
+      // 尝试保留格式的智能替换
+      let newBodyContent = ''
+      
+      // 检查原始内容是否有p标签
+      const hasPTags = /<p[^>]*>/i.test(originalBodyContent)
+      
+      if (hasPTags) {
+        // 如果有p标签，尝试替换现有的p标签内容
+        const pTagMatches = originalBodyContent.match(/<p[^>]*>[\s\S]*?<\/p>/gi) || []
+        let modifiedContent = originalBodyContent
+        let paragraphIndex = 0
+        
+        // 替换每个p标签的内容
+        for (const pTag of pTagMatches) {
+          if (paragraphIndex < translatedParagraphs.length) {
+            const pTagMatch = pTag.match(/<p([^>]*)>[\s\S]*?<\/p>/i)
+            if (pTagMatch) {
+              const attributes = pTagMatch[1] || ''
+              const newPTag = `<p${attributes}>${translatedParagraphs[paragraphIndex]}</p>`
+              modifiedContent = modifiedContent.replace(pTag, newPTag)
+              paragraphIndex++
+            }
           }
         }
-      }
-      return textNodes
-    }
-    
-    // 收集所有文本节点
-    const textNodes = collectTextNodes(doc.body)
-    
-    // 第二步：智能匹配和替换
-    // 尝试按段落结构匹配
-    let translationIndex = 0
-    
-    for (const textNode of textNodes) {
-      if (translationIndex < translatedParagraphs.length) {
-        // 保留原始的空白格式
-        const leadingSpace = textNode.fullText.match(/^\s*/)[0]
-        const trailingSpace = textNode.fullText.match(/\s*$/)[0]
         
-        // 替换文本内容
-        textNode.node.textContent = leadingSpace + translatedParagraphs[translationIndex] + trailingSpace
-        translationIndex++
-      }
-    }
-    
-    // 如果还有剩余的翻译段落，尝试将它们添加到最后的块级元素中
-    if (translationIndex < translatedParagraphs.length) {
-      const body = doc.body
-      if (body) {
-        // 查找最后一个段落元素
-        const paragraphs = body.querySelectorAll('p, div, li')
-        const lastParagraph = paragraphs[paragraphs.length - 1]
-        
-        if (lastParagraph) {
-          // 将剩余的翻译内容添加为新段落
-          while (translationIndex < translatedParagraphs.length) {
-            const newP = doc.createElement('p')
-            newP.textContent = translatedParagraphs[translationIndex]
-            lastParagraph.parentNode.insertBefore(newP, lastParagraph.nextSibling)
-            translationIndex++
-          }
+        // 添加剩余的段落
+        if (paragraphIndex < translatedParagraphs.length) {
+          const remainingParagraphs = translatedParagraphs
+            .slice(paragraphIndex)
+            .map(p => `<p>${p}</p>`)
+            .join('\n')
+          modifiedContent += '\n' + remainingParagraphs
         }
+        
+        newBodyContent = modifiedContent
+      } else {
+        // 如果没有p标签，创建新的段落结构
+        newBodyContent = translatedParagraphs.map(p => `<p>${p}</p>`).join('\n')
       }
+      
+      // 重建完整的HTML
+      const beforeBody = html.substring(0, bodyStartIndex)
+      const afterBody = html.substring(bodyEndIndex)
+      
+      return beforeBody + newBodyContent + afterBody
+      
+    } catch (error) {
+      console.error('Error in replaceTextInHtml:', error)
+      // 发生错误时，返回简单的段落替换
+      const bodyMatch = html.match(/<body[^>]*>[\s\S]*<\/body>/i)
+      if (bodyMatch) {
+        const paragraphs = translatedText
+          .split(/\n+/)
+          .filter(p => p.trim())
+          .map(p => `<p>${p}</p>`)
+          .join('\n')
+        
+        return html.replace(
+          bodyMatch[0],
+          `${bodyMatch[0].match(/<body[^>]*>/i)[0]}${paragraphs}</body>`
+        )
+      }
+      return html
     }
-    
-    // 返回修改后的HTML
-    return doc.documentElement.outerHTML
   }
 
   // 生成翻译后的 EPUB

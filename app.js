@@ -309,39 +309,13 @@ document.addEventListener('DOMContentLoaded', function() {
     return data.choices[0].message.content
   }
 
-  // 智能替换文本内容，保留HTML结构和链接
+  // 简单替换文本内容，保留HTML结构
   function replaceTextInHtml(html, originalText, translatedText) {
-    // 创建一个临时 DOM 元素来解析 HTML
-    const parser = new DOMParser()
-    const doc = parser.parseFromString(html, 'text/html')
-    
-    // 获取所有文本节点
-    const walker = document.createTreeWalker(
-      doc.body,
-      NodeFilter.SHOW_TEXT,
-      null,
-      false
+    // 直接在body标签内替换内容，保留原始HTML结构
+    return html.replace(
+      /(<body[^>]*>)[\s\S]*(<\/body>)/i,
+      `$1<div>${translatedText.replace(/\n/g, '</div><div>')}</div>$2`
     )
-    
-    let textNodes = []
-    let node
-    while (node = walker.nextNode()) {
-      textNodes.push(node)
-    }
-    
-    // 将所有文本节点的内容合并
-    const allText = textNodes.map(n => n.textContent.trim()).filter(t => t).join(' ')
-    
-    // 如果文本匹配度很高，进行替换
-    if (allText.includes(originalText.substring(0, 100)) || originalText.includes(allText.substring(0, 100))) {
-      // 简单策略：如果文本结构简单，直接替换主要文本节点
-      const mainTextNode = textNodes.find(n => n.textContent.trim().length > 50)
-      if (mainTextNode) {
-        mainTextNode.textContent = translatedText
-      }
-    }
-    
-    return doc.documentElement.outerHTML
   }
 
   // 生成翻译后的 EPUB
@@ -359,23 +333,11 @@ document.addEventListener('DOMContentLoaded', function() {
       const translation = translations[i]
       
       if (translation && translation.translated_text) {
-        try {
-          // 使用智能替换，保留 HTML 结构
-          const newHtml = replaceTextInHtml(
-            chapter.html, 
-            chapter.text, 
-            translation.translated_text
-          )
-          zip.file(chapter.fileName, newHtml)
-        } catch (err) {
-          console.error('Error replacing text in chapter:', chapter.fileName, err)
-          // 如果智能替换失败，使用简单替换作为备用
-          const newHtml = chapter.html.replace(
-            /<body[^>]*>[\s\S]*<\/body>/i,
-            `<body><div>${translation.translated_text.replace(/\n/g, '</div><div>')}</div></body>`
-          )
-          zip.file(chapter.fileName, newHtml)
-        }
+        const newHtml = chapter.html.replace(
+          /<body[^>]*>[\s\S]*<\/body>/i,
+          `<body><div>${translation.translated_text.replace(/\n/g, '</div><div>')}</div></body>`
+        )
+        zip.file(chapter.fileName, newHtml)
       }
     }
     

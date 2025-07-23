@@ -1,0 +1,12 @@
+{
+  "name": "epub-translator-simple",
+  "version": "1.0.0",
+  "description": "Simple EPUB Translator with Moonshot AI",
+  "scripts": {
+    "dev": "npx serve .",
+    "build": "echo 'No build needed for static files'"
+  },
+  "keywords": ["epub", "translator", "moonshot"],
+  "author": "RickyforAI",
+  "license": "MIT"
+}

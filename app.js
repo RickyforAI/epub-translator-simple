@@ -24,6 +24,36 @@ document.addEventListener('DOMContentLoaded', function() {
 
   let selectedFile = null
 
+  // 加载保存的 API Key
+  const savedApiKey = localStorage.getItem('moonshot_api_key')
+  if (savedApiKey && apiKeyInput) {
+    apiKeyInput.value = savedApiKey
+    console.log('Loaded saved API key')
+  }
+
+  // 保存 API Key
+  if (apiKeyInput) {
+    apiKeyInput.addEventListener('input', () => {
+      const key = apiKeyInput.value.trim()
+      if (key.length > 10) { // 只有当输入看起来像是有效的 key 时才保存
+        localStorage.setItem('moonshot_api_key', key)
+        console.log('API key saved to localStorage')
+      }
+    })
+  }
+
+  // 清除 API Key
+  const clearApiKeyBtn = document.getElementById('clearApiKey')
+  if (clearApiKeyBtn && apiKeyInput) {
+    clearApiKeyBtn.addEventListener('click', () => {
+      localStorage.removeItem('moonshot_api_key')
+      apiKeyInput.value = ''
+      console.log('API key cleared')
+      showSuccess('API Key 已清除')
+      setTimeout(() => hideMessages(), 2000)
+    })
+  }
+
   // 调试：检查元素是否存在
   console.log('Elements found:', {
     fileUpload: !!fileUpload,
@@ -279,6 +309,41 @@ document.addEventListener('DOMContentLoaded', function() {
     return data.choices[0].message.content
   }
 
+  // 智能替换文本内容，保留HTML结构和链接
+  function replaceTextInHtml(html, originalText, translatedText) {
+    // 创建一个临时 DOM 元素来解析 HTML
+    const parser = new DOMParser()
+    const doc = parser.parseFromString(html, 'text/html')
+    
+    // 获取所有文本节点
+    const walker = document.createTreeWalker(
+      doc.body,
+      NodeFilter.SHOW_TEXT,
+      null,
+      false
+    )
+    
+    let textNodes = []
+    let node
+    while (node = walker.nextNode()) {
+      textNodes.push(node)
+    }
+    
+    // 将所有文本节点的内容合并
+    const allText = textNodes.map(n => n.textContent.trim()).filter(t => t).join(' ')
+    
+    // 如果文本匹配度很高，进行替换
+    if (allText.includes(originalText.substring(0, 100)) || originalText.includes(allText.substring(0, 100))) {
+      // 简单策略：如果文本结构简单，直接替换主要文本节点
+      const mainTextNode = textNodes.find(n => n.textContent.trim().length > 50)
+      if (mainTextNode) {
+        mainTextNode.textContent = translatedText
+      }
+    }
+    
+    return doc.documentElement.outerHTML
+  }
+
   // 生成翻译后的 EPUB
   async function generateTranslatedEpub(taskId, originalContent) {
     const { data: translations } = await supabase
@@ -294,13 +359,23 @@ document.addEventListener('DOMContentLoaded', function() {
       const translation = translations[i]
       
       if (translation && translation.translated_text) {
-        // 简单替换文本内容
-        const newHtml = chapter.html.replace(
-          /<body[^>]*>[\s\S]*<\/body>/i,
-          `<body><p>${translation.translated_text.replace(/\n/g, '</p><p>')}</p></body>`
-        )
-        
-        zip.file(chapter.fileName, newHtml)
+        try {
+          // 使用智能替换，保留 HTML 结构
+          const newHtml = replaceTextInHtml(
+            chapter.html, 
+            chapter.text, 
+            translation.translated_text
+          )
+          zip.file(chapter.fileName, newHtml)
+        } catch (err) {
+          console.error('Error replacing text in chapter:', chapter.fileName, err)
+          // 如果智能替换失败，使用简单替换作为备用
+          const newHtml = chapter.html.replace(
+            /<body[^>]*>[\s\S]*<\/body>/i,
+            `<body><div>${translation.translated_text.replace(/\n/g, '</div><div>')}</div></body>`
+          )
+          zip.file(chapter.fileName, newHtml)
+        }
       }
     }
     

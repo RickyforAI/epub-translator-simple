@@ -150,7 +150,11 @@
     
     <div class="section">
       <label for="apiKey">Moonshot API Key</label>
-      <input type="password" id="apiKey" placeholder="请输入您的 API Key">
+      <div style="display: flex; gap: 10px;">
+        <input type="password" id="apiKey" placeholder="请输入您的 API Key" style="flex: 1;">
+        <button type="button" id="clearApiKey" style="width: auto; padding: 8px 12px; background: #ff6b6b; font-size: 14px;">清除</button>
+      </div>
+      <p style="font-size: 12px; color: #999; margin-top: 5px;">API Key 会自动保存在浏览器本地</p>
     </div>
     
     <div class="section">

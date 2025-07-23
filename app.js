@@ -227,11 +227,63 @@ document.addEventListener('DOMContentLoaded', function() {
     return { zip, chapters }
   }
 
-  // 提取文本
+  // 提取文本（保留段落结构）
   function extractText(html) {
-    const div = document.createElement('div')
-    div.innerHTML = html
-    return div.textContent || div.innerText || ''
+    const parser = new DOMParser()
+    const doc = parser.parseFromString(html, 'text/html')
+    
+    let paragraphs = []
+    
+    // 递归提取文本，保留段落结构
+    function extractFromNode(node) {
+      if (node.nodeType === Node.TEXT_NODE) {
+        const text = node.textContent.trim()
+        if (text) {
+          // 如果当前没有段落，创建一个
+          if (paragraphs.length === 0) {
+            paragraphs.push(text)
+          } else {
+            // 添加到最后一个段落
+            paragraphs[paragraphs.length - 1] += ' ' + text
+          }
+        }
+      } else if (node.nodeType === Node.ELEMENT_NODE) {
+        // 跳过script和style
+        if (['SCRIPT', 'STYLE'].includes(node.tagName)) {
+          return
+        }
+        
+        // 块级元素创建新段落
+        const blockTags = ['P', 'DIV', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'LI', 'BR']
+        const isBlock = blockTags.includes(node.tagName)
+        
+        if (isBlock && paragraphs.length > 0 && paragraphs[paragraphs.length - 1].trim()) {
+          paragraphs.push('') // 开始新段落
+        }
+        
+        // 递归处理子节点
+        for (const child of node.childNodes) {
+          extractFromNode(child)
+        }
+        
+        // 块级元素结束后确保有新段落
+        if (isBlock && paragraphs.length > 0 && paragraphs[paragraphs.length - 1].trim()) {
+          paragraphs.push('')
+        }
+      }
+    }
+    
+    // 从body提取
+    const body = doc.body
+    if (body) {
+      extractFromNode(body)
+    }
+    
+    // 清理空段落并合并
+    return paragraphs
+      .map(p => p.trim())
+      .filter(p => p.length > 0)
+      .join('\n\n')
   }
 
   // 翻译文本
@@ -309,13 +361,80 @@ document.addEventListener('DOMContentLoaded', function() {
     return data.choices[0].message.content
   }
 
-  // 简单替换文本内容，保留HTML结构
+  // 智能替换文本内容，保留HTML结构和格式
   function replaceTextInHtml(html, originalText, translatedText) {
-    // 直接在body标签内替换内容，保留原始HTML结构
-    return html.replace(
-      /(<body[^>]*>)[\s\S]*(<\/body>)/i,
-      `$1<div>${translatedText.replace(/\n/g, '</div><div>')}</div>$2`
-    )
+    // 创建DOM解析器
+    const parser = new DOMParser()
+    const doc = parser.parseFromString(html, 'text/html')
+    
+    // 收集所有原文文本节点和翻译段落
+    const originalTexts = []
+    const translatedParagraphs = translatedText.split(/\n+/).filter(p => p.trim())
+    
+    // 第一步：收集所有原文文本节点
+    function collectTextNodes(node, textNodes = []) {
+      if (node.nodeType === Node.TEXT_NODE) {
+        const text = node.textContent.trim()
+        if (text.length > 0) {
+          textNodes.push({
+            node: node,
+            text: text,
+            fullText: node.textContent // 保留完整文本包括空白
+          })
+        }
+      } else if (node.nodeType === Node.ELEMENT_NODE) {
+        // 跳过script和style标签
+        if (!['SCRIPT', 'STYLE'].includes(node.tagName)) {
+          const children = Array.from(node.childNodes)
+          for (const child of children) {
+            collectTextNodes(child, textNodes)
+          }
+        }
+      }
+      return textNodes
+    }
+    
+    // 收集所有文本节点
+    const textNodes = collectTextNodes(doc.body)
+    
+    // 第二步：智能匹配和替换
+    // 尝试按段落结构匹配
+    let translationIndex = 0
+    
+    for (const textNode of textNodes) {
+      if (translationIndex < translatedParagraphs.length) {
+        // 保留原始的空白格式
+        const leadingSpace = textNode.fullText.match(/^\s*/)[0]
+        const trailingSpace = textNode.fullText.match(/\s*$/)[0]
+        
+        // 替换文本内容
+        textNode.node.textContent = leadingSpace + translatedParagraphs[translationIndex] + trailingSpace
+        translationIndex++
+      }
+    }
+    
+    // 如果还有剩余的翻译段落，尝试将它们添加到最后的块级元素中
+    if (translationIndex < translatedParagraphs.length) {
+      const body = doc.body
+      if (body) {
+        // 查找最后一个段落元素
+        const paragraphs = body.querySelectorAll('p, div, li')
+        const lastParagraph = paragraphs[paragraphs.length - 1]
+        
+        if (lastParagraph) {
+          // 将剩余的翻译内容添加为新段落
+          while (translationIndex < translatedParagraphs.length) {
+            const newP = doc.createElement('p')
+            newP.textContent = translatedParagraphs[translationIndex]
+            lastParagraph.parentNode.insertBefore(newP, lastParagraph.nextSibling)
+            translationIndex++
+          }
+        }
+      }
+    }
+    
+    // 返回修改后的HTML
+    return doc.documentElement.outerHTML
   }
 
   // 生成翻译后的 EPUB
@@ -333,9 +452,11 @@ document.addEventListener('DOMContentLoaded', function() {
       const translation = translations[i]
       
       if (translation && translation.translated_text) {
-        const newHtml = chapter.html.replace(
-          /<body[^>]*>[\s\S]*<\/body>/i,
-          `<body><div>${translation.translated_text.replace(/\n/g, '</div><div>')}</div></body>`
+        // 使用智能替换函数保留HTML格式
+        const newHtml = replaceTextInHtml(
+          chapter.html, 
+          chapter.text, 
+          translation.translated_text
         )
         zip.file(chapter.fileName, newHtml)
       }

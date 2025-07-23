@@ -33,10 +33,30 @@ document.addEventListener('DOMContentLoaded', function() {
 
   // 文件选择
   if (fileUpload && fileInput) {
+    // 方法1：直接点击
     fileUpload.addEventListener('click', (e) => {
       e.preventDefault()
-      console.log('File upload clicked')
-      fileInput.click()
+      e.stopPropagation()
+      console.log('File upload clicked - attempting file input click')
+      
+      try {
+        // 尝试直接触发
+        fileInput.click()
+        console.log('File input clicked successfully')
+      } catch (err) {
+        console.error('Error clicking file input:', err)
+        // 备用方案：创建一个新的 input
+        const newInput = document.createElement('input')
+        newInput.type = 'file'
+        newInput.accept = '.epub'
+        newInput.style.display = 'none'
+        newInput.addEventListener('change', (e) => {
+          handleFileSelect(e)
+          document.body.removeChild(newInput)
+        })
+        document.body.appendChild(newInput)
+        newInput.click()
+      }
     })
     
     fileInput.addEventListener('change', handleFileSelect)

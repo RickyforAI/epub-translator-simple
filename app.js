@@ -140,8 +140,8 @@ document.addEventListener('DOMContentLoaded', function() {
     }
     
     // 检查文件大小
-    if (selectedFile.size > 5 * 1024 * 1024) {
-      showError('文件太大，请选择小于 5MB 的文件')
+    if (selectedFile.size > 10 * 1024 * 1024) {
+      showError('文件太大，请选择小于 10MB 的文件')
       return
     }
     
@@ -302,7 +302,7 @@ document.addEventListener('DOMContentLoaded', function() {
       .join('\n\n')
   }
 
-  // 翻译文本
+  // 翻译文本（优化大文件处理）
   async function translateTexts(taskId, apiKey, style) {
     // 获取所有待翻译文本
     const { data: texts } = await supabase
@@ -312,37 +312,81 @@ document.addEventListener('DOMContentLoaded', function() {
     
     const total = texts.length
     let completed = 0
+    let errors = 0
     
-    // 逐个翻译（简化版，不并发）
-    for (const text of texts) {
-      try {
-        // 如果文本太长，需要分段翻译
-        const chunks = splitTextIntoChunks(text.original_text, 1500)
-        const translatedChunks = []
+    // 分批处理，避免内存溢出
+    const batchSize = 10 // 每批处理10个章节
+    const batches = []
+    for (let i = 0; i < texts.length; i += batchSize) {
+      batches.push(texts.slice(i, i + batchSize))
+    }
+    
+    updateStatus(`准备翻译 ${total} 个章节，分 ${batches.length} 批处理...`)
+    
+    // 逐批处理
+    for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
+      const batch = batches[batchIndex]
+      const batchPromises = []
+      
+      // 批内并发，但限制并发数
+      for (const text of batch) {
+        const promise = translateSingleText(text, apiKey, style).then(async (translation) => {
+          if (translation) {
+            await supabase
+              .from('translations')
+              .update({ 
+                translated_text: translation,
+                status: 'completed'
+              })
+              .eq('id', text.id)
+            
+            completed++
+          } else {
+            errors++
+          }
+          
+          updateProgress((completed / total) * 100)
+          updateStatus(`翻译进度: ${completed}/${total} 章节 (批次 ${batchIndex + 1}/${batches.length})`)
+        })
         
-        for (const chunk of chunks) {
-          const translatedChunk = await callMoonshotAPI(chunk, apiKey, style)
-          translatedChunks.push(translatedChunk)
-        }
-        
-        const fullTranslation = translatedChunks.join('\n\n')
-        
-        await supabase
-          .from('translations')
-          .update({ 
-            translated_text: fullTranslation,
-            status: 'completed'
-          })
-          .eq('id', text.id)
-        
-        completed++
-        updateProgress((completed / total) * 100)
-        updateStatus(`翻译进度: ${completed}/${total} 章节`)
-        
-      } catch (err) {
-        console.error('Translation error:', err)
-        // 继续处理其他章节
+        batchPromises.push(promise)
       }
+      
+      // 等待当前批次完成
+      await Promise.all(batchPromises)
+      
+      // 批次间短暂延迟，避免API限流
+      if (batchIndex < batches.length - 1) {
+        await new Promise(resolve => setTimeout(resolve, 1000))
+      }
+    }
+    
+    if (errors > 0) {
+      updateStatus(`翻译完成，成功 ${completed} 章节，失败 ${errors} 章节`)
+    }
+  }
+  
+  // 翻译单个文本
+  async function translateSingleText(text, apiKey, style) {
+    try {
+      // 如果文本太长，需要分段翻译
+      const chunks = splitTextIntoChunks(text.original_text, 1500)
+      const translatedChunks = []
+      
+      for (const chunk of chunks) {
+        const translatedChunk = await callMoonshotAPI(chunk, apiKey, style)
+        translatedChunks.push(translatedChunk)
+        
+        // 分段间短暂延迟
+        if (chunks.length > 1) {
+          await new Promise(resolve => setTimeout(resolve, 500))
+        }
+      }
+      
+      return translatedChunks.join('\n\n')
+    } catch (err) {
+      console.error('Translation error:', err)
+      return null
     }
   }
 
@@ -406,10 +450,8 @@ document.addEventListener('DOMContentLoaded', function() {
     return chunks
   }
   
-  // 调用 Moonshot API
-  async function callMoonshotAPI(text, apiKey, style) {
-    // 文本已经在外部分割，这里不再截断
-    
+  // 调用 Moonshot API（增加重试机制）
+  async function callMoonshotAPI(text, apiKey, style, retryCount = 0) {
     const prompts = {
       fiction: '直接翻译下面的英文小说内容为中文，不要添加任何解释或说明，只输出翻译结果：\n\n',
       science: '直接翻译下面的科技内容为中文，保持专业术语准确，只输出翻译结果：\n\n',
@@ -418,31 +460,52 @@ document.addEventListener('DOMContentLoaded', function() {
     
     const prompt = prompts[style] || prompts.general
     
-    const response = await fetch('https://api.moonshot.cn/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${apiKey}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        model: 'moonshot-v1-8k',
-        messages: [
-          { role: 'user', content: prompt + text }
-        ],
-        temperature: 0.3
+    try {
+      const response = await fetch('https://api.moonshot.cn/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${apiKey}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          model: 'moonshot-v1-8k',
+          messages: [
+            { role: 'user', content: prompt + text }
+          ],
+          temperature: 0.3
+        })
       })
-    })
-    
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}))
-      throw new Error(errorData.error?.message || 'API 调用失败')
+      
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}))
+        const errorMessage = errorData.error?.message || `API 错误: ${response.status}`
+        
+        // 处理限流错误
+        if (response.status === 429 && retryCount < 3) {
+          console.log(`API 限流，等待后重试 (${retryCount + 1}/3)...`)
+          await new Promise(resolve => setTimeout(resolve, (retryCount + 1) * 2000))
+          return callMoonshotAPI(text, apiKey, style, retryCount + 1)
+        }
+        
+        throw new Error(errorMessage)
+      }
+      
+      const data = await response.json()
+      const rawOutput = data.choices[0].message.content
+      
+      // 清理LLM输出，确保只包含翻译内容
+      return cleanLLMOutput(rawOutput)
+      
+    } catch (error) {
+      // 网络错误重试
+      if (retryCount < 3 && (error.message.includes('fetch') || error.message.includes('network'))) {
+        console.log(`网络错误，等待后重试 (${retryCount + 1}/3)...`)
+        await new Promise(resolve => setTimeout(resolve, (retryCount + 1) * 1000))
+        return callMoonshotAPI(text, apiKey, style, retryCount + 1)
+      }
+      
+      throw error
     }
-    
-    const data = await response.json()
-    const rawOutput = data.choices[0].message.content
-    
-    // 清理LLM输出，确保只包含翻译内容
-    return cleanLLMOutput(rawOutput)
   }
   
   // 清理LLM输出，移除可能的额外内容

@@ -112,13 +112,52 @@ document.addEventListener('DOMContentLoaded', function() {
   function handleFileSelect(e) {
     console.log('File selected:', e.target.files)
     const file = e.target.files[0]
-    if (file && file.name.endsWith('.epub')) {
-      selectedFile = file
-      fileName.textContent = `已选择: ${file.name} (${(file.size / 1024 / 1024).toFixed(2)} MB)`
-      translateBtn.disabled = false
-      hideMessages()
-    } else if (file) {
-      showError('请选择 EPUB 格式的文件')
+    if (file) {
+      // 检查文件扩展名（不区分大小写）或MIME类型
+      const isEpub = file.name.toLowerCase().endsWith('.epub') || 
+                     file.type === 'application/epub+zip' ||
+                     file.type === 'application/epub'
+      
+      console.log('File info:', {
+        name: file.name,
+        type: file.type,
+        size: file.size,
+        isEpub: isEpub
+      })
+      
+      if (isEpub) {
+        selectedFile = file
+        fileName.textContent = `已选择: ${file.name} (${(file.size / 1024 / 1024).toFixed(2)} MB)`
+        translateBtn.disabled = false
+        hideMessages()
+      } else {
+        // 如果扩展名和MIME类型都不匹配，尝试检查文件内容
+        checkEpubContent(file)
+      }
+    }
+  }
+  
+  // 检查文件内容是否为EPUB格式
+  async function checkEpubContent(file) {
+    try {
+      // 读取文件前几个字节来检查是否是ZIP格式（EPUB本质是ZIP）
+      const slice = file.slice(0, 4)
+      const buffer = await slice.arrayBuffer()
+      const bytes = new Uint8Array(buffer)
+      
+      // ZIP文件的魔术数字：50 4B 03 04 (PK..)
+      if (bytes[0] === 0x50 && bytes[1] === 0x4B && bytes[2] === 0x03 && bytes[3] === 0x04) {
+        console.log('File appears to be a ZIP/EPUB file based on magic bytes')
+        selectedFile = file
+        fileName.textContent = `已选择: ${file.name} (${(file.size / 1024 / 1024).toFixed(2)} MB)`
+        translateBtn.disabled = false
+        hideMessages()
+      } else {
+        showError('请选择有效的 EPUB 格式文件')
+      }
+    } catch (err) {
+      console.error('Error checking file content:', err)
+      showError('无法验证文件格式')
     }
   }
 

@@ -218,7 +218,8 @@ document.addEventListener('DOMContentLoaded', function() {
       if (fileName.endsWith('.html') || fileName.endsWith('.xhtml')) {
         const content = await zip.file(fileName).async('string')
         const text = extractText(content)
-        if (text.length > 100) {
+        // 降低阈值，确保不遗漏短章节
+        if (text.length > 10) {
           chapters.push({ fileName, text, html: content })
         }
       }
@@ -300,12 +301,21 @@ document.addEventListener('DOMContentLoaded', function() {
     // 逐个翻译（简化版，不并发）
     for (const text of texts) {
       try {
-        const translated = await callMoonshotAPI(text.original_text, apiKey, style)
+        // 如果文本太长，需要分段翻译
+        const chunks = splitTextIntoChunks(text.original_text, 1500)
+        const translatedChunks = []
+        
+        for (const chunk of chunks) {
+          const translatedChunk = await callMoonshotAPI(chunk, apiKey, style)
+          translatedChunks.push(translatedChunk)
+        }
+        
+        const fullTranslation = translatedChunks.join('\n\n')
         
         await supabase
           .from('translations')
           .update({ 
-            translated_text: translated,
+            translated_text: fullTranslation,
             status: 'completed'
           })
           .eq('id', text.id)
@@ -321,13 +331,69 @@ document.addEventListener('DOMContentLoaded', function() {
     }
   }
 
+  // 智能文本分割函数
+  function splitTextIntoChunks(text, maxLength) {
+    if (text.length <= maxLength) {
+      return [text]
+    }
+    
+    const chunks = []
+    const paragraphs = text.split('\n\n')
+    let currentChunk = ''
+    
+    for (const paragraph of paragraphs) {
+      // 如果单个段落就超过最大长度，需要在句子级别分割
+      if (paragraph.length > maxLength) {
+        // 先处理当前块
+        if (currentChunk) {
+          chunks.push(currentChunk.trim())
+          currentChunk = ''
+        }
+        
+        // 按句子分割段落
+        const sentences = paragraph.match(/[^。！？.!?]+[。！？.!?]+/g) || [paragraph]
+        let sentenceChunk = ''
+        
+        for (const sentence of sentences) {
+          if ((sentenceChunk + sentence).length > maxLength) {
+            if (sentenceChunk) {
+              chunks.push(sentenceChunk.trim())
+              sentenceChunk = sentence
+            } else {
+              // 单个句子太长，强制分割
+              chunks.push(sentence.substring(0, maxLength))
+              sentenceChunk = sentence.substring(maxLength)
+            }
+          } else {
+            sentenceChunk += sentence
+          }
+        }
+        
+        if (sentenceChunk) {
+          currentChunk = sentenceChunk
+        }
+      } else {
+        // 检查添加这个段落是否会超过限制
+        if ((currentChunk + '\n\n' + paragraph).length > maxLength) {
+          chunks.push(currentChunk.trim())
+          currentChunk = paragraph
+        } else {
+          currentChunk = currentChunk ? currentChunk + '\n\n' + paragraph : paragraph
+        }
+      }
+    }
+    
+    // 添加最后一个块
+    if (currentChunk) {
+      chunks.push(currentChunk.trim())
+    }
+    
+    return chunks
+  }
+  
   // 调用 Moonshot API
   async function callMoonshotAPI(text, apiKey, style) {
-    // 限制文本长度
-    const maxLength = 1500
-    if (text.length > maxLength) {
-      text = text.substring(0, maxLength)
-    }
+    // 文本已经在外部分割，这里不再截断
     
     const prompts = {
       fiction: '直接翻译下面的英文小说内容为中文，不要添加任何解释或说明，只输出翻译结果：\n\n',

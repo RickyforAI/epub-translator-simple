@@ -284,17 +284,25 @@ document.addEventListener('DOMContentLoaded', function() {
     const chapters = []
     const files = Object.keys(zip.files)
     
+    console.log(`EPUB contains ${files.length} files`)
+    
     // 简单提取文本内容
     for (const fileName of files) {
       if (fileName.endsWith('.html') || fileName.endsWith('.xhtml')) {
         const content = await zip.file(fileName).async('string')
         const text = extractText(content)
+        console.log(`File: ${fileName}, Text length: ${text.length}`)
+        
         // 降低阈值，确保不遗漏短章节
         if (text.length > 10) {
           chapters.push({ fileName, text, html: content })
+        } else if (text.length > 0) {
+          console.log(`Skipping short chapter: ${fileName} (${text.length} chars)`)
         }
       }
     }
+    
+    console.log(`Found ${chapters.length} chapters to translate`)
     
     return { zip, chapters }
   }
@@ -381,12 +389,14 @@ document.addEventListener('DOMContentLoaded', function() {
       .select('*')
       .eq('task_id', taskId)
     
+    console.log(`Starting translation of ${texts.length} texts`)
+    
     const total = texts.length
     let completed = 0
     let errors = 0
     
-    // 分批处理，避免内存溢出
-    const batchSize = 10 // 每批处理10个章节
+    // 减小批大小，提高响应速度
+    const batchSize = 3 // 每批处理3个章节
     const batches = []
     for (let i = 0; i < texts.length; i += batchSize) {
       batches.push(texts.slice(i, i + batchSize))
@@ -397,6 +407,8 @@ document.addEventListener('DOMContentLoaded', function() {
     // 逐批处理
     for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
       const batch = batches[batchIndex]
+      console.log(`Processing batch ${batchIndex + 1}/${batches.length} with ${batch.length} chapters`)
+      
       const batchPromises = []
       
       // 批内并发，但限制并发数
@@ -412,12 +424,17 @@ document.addEventListener('DOMContentLoaded', function() {
               .eq('id', text.id)
             
             completed++
+            console.log(`Completed ${completed}/${total}`)
           } else {
             errors++
+            console.log(`Error translating text ${text.id}`)
           }
           
           updateProgress((completed / total) * 100)
           updateStatus(`翻译进度: ${completed}/${total} 章节 (批次 ${batchIndex + 1}/${batches.length})`)
+        }).catch(err => {
+          console.error('Translation promise error:', err)
+          errors++
         })
         
         batchPromises.push(promise)
@@ -435,28 +452,44 @@ document.addEventListener('DOMContentLoaded', function() {
     if (errors > 0) {
       updateStatus(`翻译完成，成功 ${completed} 章节，失败 ${errors} 章节`)
     }
+    
+    console.log(`Translation completed: ${completed} success, ${errors} errors`)
   }
   
   // 翻译单个文本
   async function translateSingleText(text, apiKey, style) {
     try {
+      console.log(`Translating text ${text.id}, length: ${text.original_text.length}`)
+      
       // 如果文本太长，需要分段翻译
       const chunks = splitTextIntoChunks(text.original_text, 1500)
+      console.log(`Split into ${chunks.length} chunks`)
+      
       const translatedChunks = []
       
-      for (const chunk of chunks) {
-        const translatedChunk = await callMoonshotAPI(chunk, apiKey, style)
+      for (let i = 0; i < chunks.length; i++) {
+        console.log(`Translating chunk ${i + 1}/${chunks.length}, length: ${chunks[i].length}`)
+        const startTime = Date.now()
+        
+        const translatedChunk = await callMoonshotAPI(chunks[i], apiKey, style)
+        
+        const elapsed = Date.now() - startTime
+        console.log(`Chunk ${i + 1} translated in ${elapsed}ms`)
+        
         translatedChunks.push(translatedChunk)
         
         // 分段间短暂延迟
-        if (chunks.length > 1) {
+        if (chunks.length > 1 && i < chunks.length - 1) {
           await new Promise(resolve => setTimeout(resolve, 500))
         }
       }
       
-      return translatedChunks.join('\n\n')
+      const result = translatedChunks.join('\n\n')
+      console.log(`Text ${text.id} translation completed, result length: ${result.length}`)
+      
+      return result
     } catch (err) {
-      console.error('Translation error:', err)
+      console.error('Translation error for text', text.id, ':', err)
       return null
     }
   }

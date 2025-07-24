@@ -330,9 +330,9 @@ document.addEventListener('DOMContentLoaded', function() {
     }
     
     const prompts = {
-      fiction: '你是一位资深的文学翻译家。请将下面的英文小说翻译成中文，保持文学性和流畅度：\n\n',
-      science: '你是一位专业的科技翻译专家。请将下面的科技内容翻译成中文，确保术语准确：\n\n',
-      general: '请将下面的英文翻译成中文：\n\n'
+      fiction: '直接翻译下面的英文小说内容为中文，不要添加任何解释或说明，只输出翻译结果：\n\n',
+      science: '直接翻译下面的科技内容为中文，保持专业术语准确，只输出翻译结果：\n\n',
+      general: '直接翻译下面的英文为中文，只输出翻译结果：\n\n'
     }
     
     const prompt = prompts[style] || prompts.general
@@ -358,105 +358,106 @@ document.addEventListener('DOMContentLoaded', function() {
     }
     
     const data = await response.json()
-    return data.choices[0].message.content
+    const rawOutput = data.choices[0].message.content
+    
+    // 清理LLM输出，确保只包含翻译内容
+    return cleanLLMOutput(rawOutput)
+  }
+  
+  // 清理LLM输出，移除可能的额外内容
+  function cleanLLMOutput(text) {
+    // 1. 移除可能的提示词泄露（如"注意："、"翻译："等开头）
+    const cleanedText = text
+      .replace(/^(注意|说明|提示|翻译)[：:].*/gm, '')
+      .replace(/^[\s\S]*?开始翻译[：:]\s*/i, '')
+      .trim()
+    
+    // 2. 检查是否包含明显的英文段落（可能是原文重复）
+    const lines = cleanedText.split('\n')
+    const chineseLines = lines.filter(line => {
+      // 统计中文字符比例
+      const chineseChars = (line.match(/[\u4e00-\u9fa5]/g) || []).length
+      const totalChars = line.trim().length
+      // 如果中文字符少于20%，可能是英文行，过滤掉
+      return totalChars === 0 || (chineseChars / totalChars) > 0.2
+    })
+    
+    return chineseLines.join('\n').trim()
   }
 
-  // 智能替换文本内容，保留HTML结构和格式
+  // 简化的HTML替换函数，确保XHTML兼容性
   function replaceTextInHtml(html, originalText, translatedText) {
     try {
-      // 确保我们有有效的输入
+      // 防御性编程：验证输入
       if (!html || !translatedText) {
         console.error('Invalid input for replaceTextInHtml')
         return html
       }
       
-      // 分割翻译文本为段落
+      // 清理翻译文本，分割为段落
       const translatedParagraphs = translatedText
         .split(/\n+/)
         .map(p => p.trim())
         .filter(p => p.length > 0)
       
-      // 查找body标签的位置
-      const bodyStartMatch = html.match(/<body[^>]*>/i)
-      const bodyEndIndex = html.lastIndexOf('</body>')
+      // 保留XML声明和DOCTYPE
+      let xmlDeclaration = ''
+      let doctype = ''
+      let htmlContent = html
       
-      if (!bodyStartMatch || bodyEndIndex === -1) {
-        console.error('No valid body tags found')
-        // 如果没有body标签，尝试直接返回带段落的内容
-        return translatedParagraphs.map(p => `<p>${p}</p>`).join('\n')
+      // 提取XML声明
+      if (html.trim().startsWith('<?xml')) {
+        const xmlEnd = html.indexOf('?>') + 2
+        xmlDeclaration = html.substring(0, xmlEnd) + '\n'
+        htmlContent = html.substring(xmlEnd).trim()
       }
       
-      // 提取body标签和其属性
-      const bodyTag = bodyStartMatch[0]
-      const bodyStartIndex = bodyStartMatch.index + bodyTag.length
-      
-      // 提取原始body内容
-      const originalBodyContent = html.substring(bodyStartIndex, bodyEndIndex)
-      
-      // 尝试保留格式的智能替换
-      let newBodyContent = ''
-      
-      // 检查原始内容是否有p标签
-      const hasPTags = /<p[^>]*>/i.test(originalBodyContent)
-      
-      if (hasPTags) {
-        // 如果有p标签，尝试替换现有的p标签内容
-        const pTagMatches = originalBodyContent.match(/<p[^>]*>[\s\S]*?<\/p>/gi) || []
-        let modifiedContent = originalBodyContent
-        let paragraphIndex = 0
-        
-        // 替换每个p标签的内容
-        for (const pTag of pTagMatches) {
-          if (paragraphIndex < translatedParagraphs.length) {
-            const pTagMatch = pTag.match(/<p([^>]*)>[\s\S]*?<\/p>/i)
-            if (pTagMatch) {
-              const attributes = pTagMatch[1] || ''
-              const newPTag = `<p${attributes}>${translatedParagraphs[paragraphIndex]}</p>`
-              modifiedContent = modifiedContent.replace(pTag, newPTag)
-              paragraphIndex++
-            }
-          }
-        }
-        
-        // 添加剩余的段落
-        if (paragraphIndex < translatedParagraphs.length) {
-          const remainingParagraphs = translatedParagraphs
-            .slice(paragraphIndex)
-            .map(p => `<p>${p}</p>`)
-            .join('\n')
-          modifiedContent += '\n' + remainingParagraphs
-        }
-        
-        newBodyContent = modifiedContent
-      } else {
-        // 如果没有p标签，创建新的段落结构
-        newBodyContent = translatedParagraphs.map(p => `<p>${p}</p>`).join('\n')
+      // 提取DOCTYPE
+      const doctypeMatch = htmlContent.match(/<!DOCTYPE[^>]*>/i)
+      if (doctypeMatch) {
+        doctype = doctypeMatch[0] + '\n'
+        htmlContent = htmlContent.substring(doctypeMatch.index + doctypeMatch[0].length).trim()
       }
       
-      // 重建完整的HTML
-      const beforeBody = html.substring(0, bodyStartIndex)
-      const afterBody = html.substring(bodyEndIndex)
+      // 查找body内容
+      const bodyMatch = htmlContent.match(/<body[^>]*>([\s\S]*)<\/body>/i)
+      if (!bodyMatch) {
+        // 如果没有body，创建完整的XHTML结构
+        return xmlDeclaration + doctype + `<html xmlns="http://www.w3.org/1999/xhtml">
+<head><title>Translated</title></head>
+<body>
+${translatedParagraphs.map(p => `  <p>${escapeXml(p)}</p>`).join('\n')}
+</body>
+</html>`
+      }
       
-      return beforeBody + newBodyContent + afterBody
+      // 生成新的body内容（简单方案）
+      const newBodyContent = translatedParagraphs
+        .map(p => `  <p>${escapeXml(p)}</p>`)
+        .join('\n')
+      
+      // 替换body内容
+      const newHtml = htmlContent.replace(
+        /<body[^>]*>[\s\S]*<\/body>/i,
+        `${bodyMatch[0].match(/<body[^>]*>/i)[0]}\n${newBodyContent}\n</body>`
+      )
+      
+      return xmlDeclaration + doctype + newHtml
       
     } catch (error) {
       console.error('Error in replaceTextInHtml:', error)
-      // 发生错误时，返回简单的段落替换
-      const bodyMatch = html.match(/<body[^>]*>[\s\S]*<\/body>/i)
-      if (bodyMatch) {
-        const paragraphs = translatedText
-          .split(/\n+/)
-          .filter(p => p.trim())
-          .map(p => `<p>${p}</p>`)
-          .join('\n')
-        
-        return html.replace(
-          bodyMatch[0],
-          `${bodyMatch[0].match(/<body[^>]*>/i)[0]}${paragraphs}</body>`
-        )
-      }
-      return html
+      return html // 出错时返回原内容
     }
+  }
+  
+  // XML转义函数，确保文本内容安全
+  function escapeXml(text) {
+    return text
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&apos;')
   }
 
   // 生成翻译后的 EPUB

@@ -89,7 +89,10 @@ document.addEventListener('DOMContentLoaded', function() {
       }
     })
     
-    fileInput.addEventListener('change', handleFileSelect)
+    fileInput.addEventListener('change', (e) => {
+      console.log('File input change event triggered')
+      handleFileSelect(e)
+    })
     
     fileUpload.addEventListener('dragover', (e) => {
       e.preventDefault()
@@ -103,6 +106,7 @@ document.addEventListener('DOMContentLoaded', function() {
     fileUpload.addEventListener('drop', (e) => {
       e.preventDefault()
       fileUpload.classList.remove('active')
+      console.log('File dropped:', e.dataTransfer.files)
       if (e.dataTransfer.files[0]) {
         handleFileSelect({ target: { files: e.dataTransfer.files } })
       }
@@ -110,40 +114,59 @@ document.addEventListener('DOMContentLoaded', function() {
   }
 
   function handleFileSelect(e) {
-    console.log('File selected:', e.target.files)
+    console.log('handleFileSelect called')
+    console.log('Event:', e)
+    console.log('Files:', e.target.files)
+    
     const file = e.target.files[0]
     if (file) {
-      // 检查文件扩展名（不区分大小写）或MIME类型
-      const isEpub = file.name.toLowerCase().endsWith('.epub') || 
-                     file.type === 'application/epub+zip' ||
-                     file.type === 'application/epub'
-      
-      console.log('File info:', {
+      // 打印详细的文件信息
+      console.log('Detailed file info:', {
         name: file.name,
-        type: file.type,
+        type: file.type || 'no type',
         size: file.size,
-        isEpub: isEpub
+        lastModified: new Date(file.lastModified).toISOString()
       })
       
-      if (isEpub) {
+      // 更宽松的EPUB检查
+      const fileNameLower = file.name.toLowerCase()
+      const hasEpubExtension = fileNameLower.endsWith('.epub')
+      const hasEpubInName = fileNameLower.includes('.epub')
+      
+      console.log('EPUB checks:', {
+        hasEpubExtension,
+        hasEpubInName,
+        mimeType: file.type
+      })
+      
+      // 如果文件名包含.epub，直接接受
+      if (hasEpubInName) {
+        console.log('File accepted based on name containing .epub')
         selectedFile = file
         fileName.textContent = `已选择: ${file.name} (${(file.size / 1024 / 1024).toFixed(2)} MB)`
         translateBtn.disabled = false
         hideMessages()
       } else {
-        // 如果扩展名和MIME类型都不匹配，尝试检查文件内容
+        // 否则检查文件内容
+        console.log('Checking file content...')
         checkEpubContent(file)
       }
+    } else {
+      console.log('No file selected')
     }
   }
   
   // 检查文件内容是否为EPUB格式
   async function checkEpubContent(file) {
     try {
+      console.log('Checking file content for:', file.name)
+      
       // 读取文件前几个字节来检查是否是ZIP格式（EPUB本质是ZIP）
       const slice = file.slice(0, 4)
       const buffer = await slice.arrayBuffer()
       const bytes = new Uint8Array(buffer)
+      
+      console.log('File magic bytes:', Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join(' '))
       
       // ZIP文件的魔术数字：50 4B 03 04 (PK..)
       if (bytes[0] === 0x50 && bytes[1] === 0x4B && bytes[2] === 0x03 && bytes[3] === 0x04) {
@@ -153,11 +176,20 @@ document.addEventListener('DOMContentLoaded', function() {
         translateBtn.disabled = false
         hideMessages()
       } else {
-        showError('请选择有效的 EPUB 格式文件')
+        console.log('Not a ZIP file. Magic bytes:', bytes)
+        // 即使不是标准ZIP格式，如果用户坚持，也尝试处理
+        showError('文件格式验证失败，但您可以尝试继续翻译')
+        selectedFile = file
+        fileName.textContent = `已选择: ${file.name} (${(file.size / 1024 / 1024).toFixed(2)} MB) - 格式未验证`
+        translateBtn.disabled = false
       }
     } catch (err) {
       console.error('Error checking file content:', err)
-      showError('无法验证文件格式')
+      // 出错时也允许用户继续
+      selectedFile = file
+      fileName.textContent = `已选择: ${file.name} (${(file.size / 1024 / 1024).toFixed(2)} MB) - 未验证`
+      translateBtn.disabled = false
+      showError('无法验证文件格式，但您可以尝试继续')
     }
   }
 

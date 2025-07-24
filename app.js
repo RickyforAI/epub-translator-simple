@@ -228,7 +228,7 @@ document.addEventListener('DOMContentLoaded', function() {
     return { zip, chapters }
   }
 
-  // 提取文本（保留段落结构）
+  // 提取文本（保留段落结构和元素关系）
   function extractText(html) {
     const parser = new DOMParser()
     const doc = parser.parseFromString(html, 'text/html')
@@ -236,7 +236,7 @@ document.addEventListener('DOMContentLoaded', function() {
     let paragraphs = []
     
     // 递归提取文本，保留段落结构
-    function extractFromNode(node) {
+    function extractFromNode(node, inLink = false) {
       if (node.nodeType === Node.TEXT_NODE) {
         const text = node.textContent.trim()
         if (text) {
@@ -245,26 +245,41 @@ document.addEventListener('DOMContentLoaded', function() {
             paragraphs.push(text)
           } else {
             // 添加到最后一个段落
-            paragraphs[paragraphs.length - 1] += ' ' + text
+            const lastParagraph = paragraphs[paragraphs.length - 1]
+            if (lastParagraph.endsWith(' ') || lastParagraph === '' || text.startsWith(' ')) {
+              paragraphs[paragraphs.length - 1] += text
+            } else {
+              paragraphs[paragraphs.length - 1] += ' ' + text
+            }
           }
         }
       } else if (node.nodeType === Node.ELEMENT_NODE) {
-        // 跳过script和style
-        if (['SCRIPT', 'STYLE'].includes(node.tagName)) {
+        // 跳过script、style和meta标签
+        if (['SCRIPT', 'STYLE', 'META', 'TITLE'].includes(node.tagName)) {
+          return
+        }
+        
+        // 处理链接
+        if (node.tagName === 'A') {
+          // 提取链接文本但标记它是链接的一部分
+          for (const child of node.childNodes) {
+            extractFromNode(child, true)
+          }
           return
         }
         
         // 块级元素创建新段落
-        const blockTags = ['P', 'DIV', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'LI', 'BR']
+        const blockTags = ['P', 'DIV', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'LI', 'BR', 'SECTION', 'ARTICLE']
         const isBlock = blockTags.includes(node.tagName)
         
+        // 开始新段落
         if (isBlock && paragraphs.length > 0 && paragraphs[paragraphs.length - 1].trim()) {
-          paragraphs.push('') // 开始新段落
+          paragraphs.push('')
         }
         
         // 递归处理子节点
         for (const child of node.childNodes) {
-          extractFromNode(child)
+          extractFromNode(child, inLink)
         }
         
         // 块级元素结束后确保有新段落
@@ -451,7 +466,7 @@ document.addEventListener('DOMContentLoaded', function() {
     return chineseLines.join('\n').trim()
   }
 
-  // 简化的HTML替换函数，确保XHTML兼容性
+  // 智能HTML替换函数，保留链接和格式
   function replaceTextInHtml(html, originalText, translatedText) {
     try {
       // 防御性编程：验证输入
@@ -460,55 +475,141 @@ document.addEventListener('DOMContentLoaded', function() {
         return html
       }
       
-      // 清理翻译文本，分割为段落
-      const translatedParagraphs = translatedText
-        .split(/\n+/)
-        .map(p => p.trim())
-        .filter(p => p.length > 0)
+      // 解析HTML
+      const parser = new DOMParser()
+      const doc = parser.parseFromString(html, 'text/html')
       
-      // 保留XML声明和DOCTYPE
-      let xmlDeclaration = ''
-      let doctype = ''
-      let htmlContent = html
+      // 创建原文和译文的映射
+      const originalParagraphs = originalText.split(/\n\n+/).map(p => p.trim()).filter(p => p)
+      const translatedParagraphs = translatedText.split(/\n\n+/).map(p => p.trim()).filter(p => p)
       
-      // 提取XML声明
+      // 创建文本索引，用于匹配
+      let paragraphIndex = 0
+      
+      // 递归替换文本节点，保留HTML结构
+      function replaceTextNodes(node) {
+        if (node.nodeType === Node.TEXT_NODE) {
+          const text = node.textContent.trim()
+          if (text && paragraphIndex < translatedParagraphs.length) {
+            // 查找这个文本在原文段落中的位置
+            for (let i = paragraphIndex; i < originalParagraphs.length; i++) {
+              if (originalParagraphs[i].includes(text) || text.includes(originalParagraphs[i])) {
+                // 找到匹配，使用对应的翻译
+                node.textContent = translatedParagraphs[i] || text
+                paragraphIndex = i + 1
+                break
+              }
+            }
+          }
+        } else if (node.nodeType === Node.ELEMENT_NODE) {
+          // 跳过script和style标签
+          if (['SCRIPT', 'STYLE'].includes(node.tagName)) {
+            return
+          }
+          
+          // 处理包含混合内容的元素（文本+链接）
+          if (node.tagName === 'P' || node.tagName === 'DIV' || node.tagName === 'SPAN') {
+            const fullText = node.textContent.trim()
+            if (fullText && paragraphIndex < translatedParagraphs.length) {
+              // 检查是否是完整段落
+              for (let i = paragraphIndex; i < originalParagraphs.length; i++) {
+                if (originalParagraphs[i] === fullText || fullText.includes(originalParagraphs[i])) {
+                  // 如果元素只包含文本，直接替换
+                  if (node.childNodes.length === 1 && node.childNodes[0].nodeType === Node.TEXT_NODE) {
+                    node.textContent = translatedParagraphs[i]
+                    paragraphIndex = i + 1
+                    return
+                  } else {
+                    // 如果包含链接等子元素，需要智能替换
+                    replaceComplexNode(node, originalParagraphs[i], translatedParagraphs[i])
+                    paragraphIndex = i + 1
+                    return
+                  }
+                }
+              }
+            }
+          }
+          
+          // 递归处理子节点
+          const children = Array.from(node.childNodes)
+          children.forEach(child => replaceTextNodes(child))
+        }
+      }
+      
+      // 处理包含链接的复杂节点
+      function replaceComplexNode(node, originalText, translatedText) {
+        // 收集所有文本片段和它们的位置
+        const fragments = []
+        let currentText = ''
+        
+        function collectFragments(n) {
+          if (n.nodeType === Node.TEXT_NODE) {
+            currentText += n.textContent
+          } else if (n.nodeType === Node.ELEMENT_NODE) {
+            if (currentText) {
+              fragments.push({ type: 'text', content: currentText })
+              currentText = ''
+            }
+            if (n.tagName === 'A') {
+              fragments.push({ type: 'link', element: n.cloneNode(true) })
+            } else {
+              Array.from(n.childNodes).forEach(collectFragments)
+            }
+          }
+        }
+        
+        Array.from(node.childNodes).forEach(collectFragments)
+        if (currentText) {
+          fragments.push({ type: 'text', content: currentText })
+        }
+        
+        // 清空节点
+        node.innerHTML = ''
+        
+        // 重建节点，保留链接
+        let translatedIndex = 0
+        fragments.forEach(fragment => {
+          if (fragment.type === 'text') {
+            const textNode = document.createTextNode(translatedText.substring(translatedIndex, translatedIndex + fragment.content.length))
+            node.appendChild(textNode)
+            translatedIndex += fragment.content.length
+          } else if (fragment.type === 'link') {
+            node.appendChild(fragment.element)
+          }
+        })
+        
+        // 如果还有剩余的翻译文本，添加到末尾
+        if (translatedIndex < translatedText.length) {
+          node.appendChild(document.createTextNode(translatedText.substring(translatedIndex)))
+        }
+      }
+      
+      // 处理body
+      const body = doc.body
+      if (body) {
+        replaceTextNodes(body)
+      }
+      
+      // 序列化回HTML，保持XHTML兼容性
+      let resultHtml = new XMLSerializer().serializeToString(doc)
+      
+      // 确保自闭合标签符合XHTML规范
+      resultHtml = resultHtml
+        .replace(/<img([^>]*)(?<!\/)>/gi, '<img$1 />')
+        .replace(/<br(?!\s*\/>)([^>]*)>/gi, '<br$1 />')
+        .replace(/<hr(?!\s*\/>)([^>]*)>/gi, '<hr$1 />')
+        .replace(/<input([^>]*)(?<!\/)>/gi, '<input$1 />')
+        .replace(/<meta([^>]*)(?<!\/)>/gi, '<meta$1 />')
+        .replace(/<link([^>]*)(?<!\/)>/gi, '<link$1 />')
+      
+      // 保留原始的XML声明和DOCTYPE
       if (html.trim().startsWith('<?xml')) {
         const xmlEnd = html.indexOf('?>') + 2
-        xmlDeclaration = html.substring(0, xmlEnd) + '\n'
-        htmlContent = html.substring(xmlEnd).trim()
+        const xmlDeclaration = html.substring(0, xmlEnd)
+        resultHtml = xmlDeclaration + '\n' + resultHtml.replace(/^<\?xml[^>]*>\s*/, '')
       }
       
-      // 提取DOCTYPE
-      const doctypeMatch = htmlContent.match(/<!DOCTYPE[^>]*>/i)
-      if (doctypeMatch) {
-        doctype = doctypeMatch[0] + '\n'
-        htmlContent = htmlContent.substring(doctypeMatch.index + doctypeMatch[0].length).trim()
-      }
-      
-      // 查找body内容
-      const bodyMatch = htmlContent.match(/<body[^>]*>([\s\S]*)<\/body>/i)
-      if (!bodyMatch) {
-        // 如果没有body，创建完整的XHTML结构
-        return xmlDeclaration + doctype + `<html xmlns="http://www.w3.org/1999/xhtml">
-<head><title>Translated</title></head>
-<body>
-${translatedParagraphs.map(p => `  <p>${escapeXml(p)}</p>`).join('\n')}
-</body>
-</html>`
-      }
-      
-      // 生成新的body内容（简单方案）
-      const newBodyContent = translatedParagraphs
-        .map(p => `  <p>${escapeXml(p)}</p>`)
-        .join('\n')
-      
-      // 替换body内容
-      const newHtml = htmlContent.replace(
-        /<body[^>]*>[\s\S]*<\/body>/i,
-        `${bodyMatch[0].match(/<body[^>]*>/i)[0]}\n${newBodyContent}\n</body>`
-      )
-      
-      return xmlDeclaration + doctype + newHtml
+      return resultHtml
       
     } catch (error) {
       console.error('Error in replaceTextInHtml:', error)

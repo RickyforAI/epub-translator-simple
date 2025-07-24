@@ -466,7 +466,7 @@ document.addEventListener('DOMContentLoaded', function() {
     return chineseLines.join('\n').trim()
   }
 
-  // 智能HTML替换函数，保留链接和格式
+  // 改进的HTML替换函数，保留结构但替换所有文本
   function replaceTextInHtml(html, originalText, translatedText) {
     try {
       // 防御性编程：验证输入
@@ -475,119 +475,94 @@ document.addEventListener('DOMContentLoaded', function() {
         return html
       }
       
+      // 清理翻译文本，确保没有英文混入
+      const cleanedTranslation = cleanLLMOutput(translatedText)
+      
       // 解析HTML
       const parser = new DOMParser()
       const doc = parser.parseFromString(html, 'text/html')
       
       // 创建原文和译文的映射
       const originalParagraphs = originalText.split(/\n\n+/).map(p => p.trim()).filter(p => p)
-      const translatedParagraphs = translatedText.split(/\n\n+/).map(p => p.trim()).filter(p => p)
+      const translatedParagraphs = cleanedTranslation.split(/\n\n+/).map(p => p.trim()).filter(p => p)
       
-      // 创建文本索引，用于匹配
-      let paragraphIndex = 0
+      console.log(`Original paragraphs: ${originalParagraphs.length}, Translated: ${translatedParagraphs.length}`)
       
-      // 递归替换文本节点，保留HTML结构
-      function replaceTextNodes(node) {
+      // 收集所有文本节点
+      const textNodes = []
+      
+      function collectTextNodes(node) {
         if (node.nodeType === Node.TEXT_NODE) {
           const text = node.textContent.trim()
-          if (text && paragraphIndex < translatedParagraphs.length) {
-            // 查找这个文本在原文段落中的位置
-            for (let i = paragraphIndex; i < originalParagraphs.length; i++) {
-              if (originalParagraphs[i].includes(text) || text.includes(originalParagraphs[i])) {
-                // 找到匹配，使用对应的翻译
-                node.textContent = translatedParagraphs[i] || text
-                paragraphIndex = i + 1
-                break
-              }
+          if (text && text.length > 0) {
+            // 检查是否包含英文字母（排除数字和特殊字符）
+            if (/[a-zA-Z]/.test(text)) {
+              textNodes.push(node)
             }
           }
         } else if (node.nodeType === Node.ELEMENT_NODE) {
-          // 跳过script和style标签
-          if (['SCRIPT', 'STYLE'].includes(node.tagName)) {
+          // 跳过script、style和meta标签
+          if (['SCRIPT', 'STYLE', 'META', 'TITLE'].includes(node.tagName)) {
             return
           }
-          
-          // 处理包含混合内容的元素（文本+链接）
-          if (node.tagName === 'P' || node.tagName === 'DIV' || node.tagName === 'SPAN') {
-            const fullText = node.textContent.trim()
-            if (fullText && paragraphIndex < translatedParagraphs.length) {
-              // 检查是否是完整段落
-              for (let i = paragraphIndex; i < originalParagraphs.length; i++) {
-                if (originalParagraphs[i] === fullText || fullText.includes(originalParagraphs[i])) {
-                  // 如果元素只包含文本，直接替换
-                  if (node.childNodes.length === 1 && node.childNodes[0].nodeType === Node.TEXT_NODE) {
-                    node.textContent = translatedParagraphs[i]
-                    paragraphIndex = i + 1
-                    return
-                  } else {
-                    // 如果包含链接等子元素，需要智能替换
-                    replaceComplexNode(node, originalParagraphs[i], translatedParagraphs[i])
-                    paragraphIndex = i + 1
-                    return
-                  }
-                }
-              }
-            }
-          }
-          
           // 递归处理子节点
-          const children = Array.from(node.childNodes)
-          children.forEach(child => replaceTextNodes(child))
-        }
-      }
-      
-      // 处理包含链接的复杂节点
-      function replaceComplexNode(node, originalText, translatedText) {
-        // 收集所有文本片段和它们的位置
-        const fragments = []
-        let currentText = ''
-        
-        function collectFragments(n) {
-          if (n.nodeType === Node.TEXT_NODE) {
-            currentText += n.textContent
-          } else if (n.nodeType === Node.ELEMENT_NODE) {
-            if (currentText) {
-              fragments.push({ type: 'text', content: currentText })
-              currentText = ''
-            }
-            if (n.tagName === 'A') {
-              fragments.push({ type: 'link', element: n.cloneNode(true) })
-            } else {
-              Array.from(n.childNodes).forEach(collectFragments)
-            }
-          }
-        }
-        
-        Array.from(node.childNodes).forEach(collectFragments)
-        if (currentText) {
-          fragments.push({ type: 'text', content: currentText })
-        }
-        
-        // 清空节点
-        node.innerHTML = ''
-        
-        // 重建节点，保留链接
-        let translatedIndex = 0
-        fragments.forEach(fragment => {
-          if (fragment.type === 'text') {
-            const textNode = document.createTextNode(translatedText.substring(translatedIndex, translatedIndex + fragment.content.length))
-            node.appendChild(textNode)
-            translatedIndex += fragment.content.length
-          } else if (fragment.type === 'link') {
-            node.appendChild(fragment.element)
-          }
-        })
-        
-        // 如果还有剩余的翻译文本，添加到末尾
-        if (translatedIndex < translatedText.length) {
-          node.appendChild(document.createTextNode(translatedText.substring(translatedIndex)))
+          Array.from(node.childNodes).forEach(collectTextNodes)
         }
       }
       
       // 处理body
       const body = doc.body
       if (body) {
-        replaceTextNodes(body)
+        collectTextNodes(body)
+      }
+      
+      // 创建原文文本内容的合并版本
+      const allOriginalText = textNodes.map(node => node.textContent.trim()).join(' ')
+      
+      // 如果翻译段落数量明显少于原文，可能需要重新分配
+      if (translatedParagraphs.length < originalParagraphs.length / 2) {
+        // 将翻译文本平均分配到各个节点
+        const avgLength = Math.ceil(cleanedTranslation.length / textNodes.length)
+        let translationIndex = 0
+        
+        textNodes.forEach((node, index) => {
+          const start = translationIndex
+          const end = Math.min(start + avgLength, cleanedTranslation.length)
+          const nodeTranslation = cleanedTranslation.substring(start, end).trim()
+          
+          if (nodeTranslation) {
+            node.textContent = nodeTranslation
+            translationIndex = end
+          }
+        })
+      } else {
+        // 使用段落映射方式
+        let paragraphIndex = 0
+        let lastMatchedIndex = -1
+        
+        textNodes.forEach(node => {
+          const nodeText = node.textContent.trim()
+          
+          // 查找最匹配的原文段落
+          for (let i = paragraphIndex; i < originalParagraphs.length; i++) {
+            if (originalParagraphs[i].includes(nodeText) || nodeText.includes(originalParagraphs[i])) {
+              if (i < translatedParagraphs.length) {
+                node.textContent = translatedParagraphs[i]
+                lastMatchedIndex = i
+                paragraphIndex = i + 1
+                return
+              }
+            }
+          }
+          
+          // 如果没有找到精确匹配，使用最近的翻译
+          if (lastMatchedIndex >= 0 && lastMatchedIndex < translatedParagraphs.length) {
+            node.textContent = translatedParagraphs[lastMatchedIndex]
+          } else if (paragraphIndex < translatedParagraphs.length) {
+            node.textContent = translatedParagraphs[paragraphIndex]
+            paragraphIndex++
+          }
+        })
       }
       
       // 序列化回HTML，保持XHTML兼容性

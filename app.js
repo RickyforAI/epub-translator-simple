@@ -240,7 +240,7 @@ document.addEventListener('DOMContentLoaded', function() {
       const content = await parseEpub(selectedFile)
       
       // 3. 保存原文到数据库
-      updateStatus('准备翻译内容...')
+      updateStatus(`准备翻译 ${content.chapters.length} 个章节...`)
       const texts = content.chapters.map(ch => ({
         task_id: task.id,
         original_text: ch.text,
@@ -254,7 +254,7 @@ document.addEventListener('DOMContentLoaded', function() {
       if (textsError) throw textsError
       
       // 4. 开始翻译
-      updateStatus('开始翻译...')
+      updateStatus(`开始翻译 ${content.chapters.length} 个章节...`)
       await translateTexts(task.id, apiKey, styleSelect.value)
       
       // 5. 生成翻译后的文件
@@ -394,15 +394,27 @@ document.addEventListener('DOMContentLoaded', function() {
     const total = texts.length
     let completed = 0
     let errors = 0
+    const startTime = Date.now()
     
-    // 减小批大小，提高响应速度
-    const batchSize = 3 // 每批处理3个章节
+    // 动态批大小：根据章节数量调整
+    let batchSize
+    if (total <= 10) {
+      batchSize = 2 // 小文件，每批2个
+    } else if (total <= 50) {
+      batchSize = 3 // 中等文件，每批3个
+    } else if (total <= 100) {
+      batchSize = 5 // 大文件，每批5个
+    } else {
+      batchSize = 10 // 超大文件，每批10个
+    }
+    
     const batches = []
     for (let i = 0; i < texts.length; i += batchSize) {
       batches.push(texts.slice(i, i + batchSize))
     }
     
-    updateStatus(`准备翻译 ${total} 个章节，分 ${batches.length} 批处理...`)
+    console.log(`Using batch size: ${batchSize} for ${total} chapters`)
+    updateStatus(`准备翻译 ${total} 个章节...`)
     
     // 逐批处理
     for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
@@ -412,7 +424,8 @@ document.addEventListener('DOMContentLoaded', function() {
       const batchPromises = []
       
       // 批内并发，但限制并发数
-      for (const text of batch) {
+      for (let i = 0; i < batch.length; i++) {
+        const text = batch[i]
         const promise = translateSingleText(text, apiKey, style).then(async (translation) => {
           if (translation) {
             await supabase
@@ -430,8 +443,13 @@ document.addEventListener('DOMContentLoaded', function() {
             console.log(`Error translating text ${text.id}`)
           }
           
-          updateProgress((completed / total) * 100)
-          updateStatus(`翻译进度: ${completed}/${total} 章节 (批次 ${batchIndex + 1}/${batches.length})`)
+          // 更平滑的进度更新
+          const progress = (completed / total) * 100
+          updateProgress(progress)
+          
+          // 显示更详细的进度信息
+          const eta = calculateETA(completed, total, startTime)
+          updateStatus(`翻译进度: ${completed}/${total} 章节 (${progress.toFixed(1)}%) ${eta}`)
         }).catch(err => {
           console.error('Translation promise error:', err)
           errors++
@@ -767,6 +785,26 @@ document.addEventListener('DOMContentLoaded', function() {
       .replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;')
       .replace(/'/g, '&apos;')
+  }
+  
+  // 计算预计剩余时间
+  function calculateETA(completed, total, startTime) {
+    if (completed === 0) return ''
+    
+    const elapsed = Date.now() - startTime
+    const avgTimePerItem = elapsed / completed
+    const remaining = total - completed
+    const etaMs = remaining * avgTimePerItem
+    
+    // 转换为可读格式
+    const minutes = Math.floor(etaMs / 60000)
+    const seconds = Math.floor((etaMs % 60000) / 1000)
+    
+    if (minutes > 0) {
+      return `- 预计剩余: ${minutes}分${seconds}秒`
+    } else {
+      return `- 预计剩余: ${seconds}秒`
+    }
   }
 
   // 生成翻译后的 EPUB

@@ -307,10 +307,26 @@ document.addEventListener('DOMContentLoaded', function() {
     return { zip, chapters }
   }
 
-  // 提取文本（保留段落结构和元素关系）
+  // 提取文本（保留段落结构，跳过目录页）
   function extractText(html) {
     const parser = new DOMParser()
     const doc = parser.parseFromString(html, 'text/html')
+    
+    // 检查是否是目录页（包含大量链接）
+    const links = doc.querySelectorAll('a')
+    const textContent = doc.body ? doc.body.textContent.trim() : ''
+    const linkToTextRatio = links.length > 0 ? (links.length * 20) / textContent.length : 0
+    
+    // 如果链接比例过高，可能是目录页
+    if (linkToTextRatio > 0.5 && links.length > 5) {
+      console.log('Detected TOC page in extractText, returning minimal text')
+      // 只返回标题文本，不返回链接内容
+      const headings = doc.querySelectorAll('h1, h2, h3')
+      if (headings.length > 0) {
+        return Array.from(headings).map(h => h.textContent.trim()).join('\n\n')
+      }
+      return '' // 完全跳过目录页
+    }
     
     let paragraphs = []
     
@@ -318,7 +334,7 @@ document.addEventListener('DOMContentLoaded', function() {
     function extractFromNode(node, inLink = false) {
       if (node.nodeType === Node.TEXT_NODE) {
         const text = node.textContent.trim()
-        if (text) {
+        if (text && !inLink) { // 不提取链接内的文本
           // 如果当前没有段落，创建一个
           if (paragraphs.length === 0) {
             paragraphs.push(text)
@@ -334,17 +350,13 @@ document.addEventListener('DOMContentLoaded', function() {
         }
       } else if (node.nodeType === Node.ELEMENT_NODE) {
         // 跳过script、style和meta标签
-        if (['SCRIPT', 'STYLE', 'META', 'TITLE'].includes(node.tagName)) {
+        if (['SCRIPT', 'STYLE', 'META', 'TITLE', 'NAV'].includes(node.tagName)) {
           return
         }
         
-        // 处理链接
+        // 处理链接 - 跳过链接内容以避免目录项
         if (node.tagName === 'A') {
-          // 提取链接文本但标记它是链接的一部分
-          for (const child of node.childNodes) {
-            extractFromNode(child, true)
-          }
-          return
+          return // 完全跳过链接内容
         }
         
         // 块级元素创建新段落
@@ -426,7 +438,20 @@ document.addEventListener('DOMContentLoaded', function() {
       // 批内并发，但限制并发数
       for (let i = 0; i < batch.length; i++) {
         const text = batch[i]
-        const promise = translateSingleText(text, apiKey, style).then(async (translation) => {
+        const textIndex = batchIndex * batchSize + i
+        
+        // 计算每个文本的总chunks数（用于细粒度进度）
+        const textChunks = Math.ceil(text.original_text.length / 1500)
+        
+        const promise = translateSingleText(text, apiKey, style, (chunksDone, totalChunks) => {
+          // 细粒度进度更新回调
+          const baseProgress = (completed / total) * 100
+          const textProgress = (1 / total) * (chunksDone / totalChunks) * 100
+          const totalProgress = baseProgress + textProgress
+          
+          updateProgress(totalProgress)
+          updateStatus(`翻译进度: 章节 ${completed + 1}/${total} - 片段 ${chunksDone}/${totalChunks} (${totalProgress.toFixed(1)}%)`)
+        }).then(async (translation) => {
           if (translation) {
             await supabase
               .from('translations')
@@ -443,11 +468,10 @@ document.addEventListener('DOMContentLoaded', function() {
             console.log(`Error translating text ${text.id}`)
           }
           
-          // 更平滑的进度更新
+          // 章节完成时的进度更新
           const progress = (completed / total) * 100
           updateProgress(progress)
           
-          // 显示更详细的进度信息
           const eta = calculateETA(completed, total, startTime)
           updateStatus(`翻译进度: ${completed}/${total} 章节 (${progress.toFixed(1)}%) ${eta}`)
         }).catch(err => {
@@ -474,8 +498,8 @@ document.addEventListener('DOMContentLoaded', function() {
     console.log(`Translation completed: ${completed} success, ${errors} errors`)
   }
   
-  // 翻译单个文本
-  async function translateSingleText(text, apiKey, style) {
+  // 翻译单个文本（支持进度回调）
+  async function translateSingleText(text, apiKey, style, onChunkProgress) {
     try {
       console.log(`Translating text ${text.id}, length: ${text.original_text.length}`)
       
@@ -495,6 +519,11 @@ document.addEventListener('DOMContentLoaded', function() {
         console.log(`Chunk ${i + 1} translated in ${elapsed}ms`)
         
         translatedChunks.push(translatedChunk)
+        
+        // 通知进度更新
+        if (onChunkProgress) {
+          onChunkProgress(i + 1, chunks.length)
+        }
         
         // 分段间短暂延迟
         if (chunks.length > 1 && i < chunks.length - 1) {
@@ -651,7 +680,7 @@ document.addEventListener('DOMContentLoaded', function() {
     return chineseLines.join('\n').trim()
   }
 
-  // 改进的HTML替换函数，保留结构但替换所有文本
+  // 改进的HTML替换函数，更精确地处理章节结构
   function replaceTextInHtml(html, originalText, translatedText) {
     try {
       // 防御性编程：验证输入
@@ -663,94 +692,96 @@ document.addEventListener('DOMContentLoaded', function() {
       // 清理翻译文本，确保没有英文混入
       const cleanedTranslation = cleanLLMOutput(translatedText)
       
+      // 保留原始的XML声明和DOCTYPE
+      let xmlDeclaration = ''
+      let processedHtml = html
+      
+      if (html.trim().startsWith('<?xml')) {
+        const xmlEnd = html.indexOf('?>') + 2
+        xmlDeclaration = html.substring(0, xmlEnd) + '\n'
+        processedHtml = html.substring(xmlEnd)
+      }
+      
+      // 检查是否是目录页（包含大量链接）
+      const isTocPage = (processedHtml.match(/<a[^>]*>/g) || []).length > 10
+      
+      if (isTocPage) {
+        console.log('Detected TOC page, skipping translation')
+        return html // 目录页不翻译，保持原样
+      }
+      
       // 解析HTML
       const parser = new DOMParser()
-      const doc = parser.parseFromString(html, 'text/html')
+      const doc = parser.parseFromString(processedHtml, 'text/html')
       
       // 创建原文和译文的映射
       const originalParagraphs = originalText.split(/\n\n+/).map(p => p.trim()).filter(p => p)
       const translatedParagraphs = cleanedTranslation.split(/\n\n+/).map(p => p.trim()).filter(p => p)
       
-      console.log(`Original paragraphs: ${originalParagraphs.length}, Translated: ${translatedParagraphs.length}`)
+      console.log(`Replacing text: ${originalParagraphs.length} original, ${translatedParagraphs.length} translated`)
       
-      // 收集所有文本节点
-      const textNodes = []
+      // 更精确的文本替换策略
+      let paragraphIndex = 0
       
-      function collectTextNodes(node) {
-        if (node.nodeType === Node.TEXT_NODE) {
-          const text = node.textContent.trim()
-          if (text && text.length > 0) {
-            // 检查是否包含英文字母（排除数字和特殊字符）
-            if (/[a-zA-Z]/.test(text)) {
-              textNodes.push(node)
-            }
-          }
-        } else if (node.nodeType === Node.ELEMENT_NODE) {
-          // 跳过script、style和meta标签
-          if (['SCRIPT', 'STYLE', 'META', 'TITLE'].includes(node.tagName)) {
+      // 处理所有包含文本的元素
+      const textElements = doc.querySelectorAll('p, div, span, h1, h2, h3, h4, h5, h6, li')
+      
+      textElements.forEach(element => {
+        // 跳过只包含链接的元素
+        if (element.children.length > 0 && element.textContent.trim().length < 50) {
+          const hasOnlyLinks = Array.from(element.children).every(child => child.tagName === 'A')
+          if (hasOnlyLinks) {
+            console.log('Skipping element with only links')
             return
           }
-          // 递归处理子节点
-          Array.from(node.childNodes).forEach(collectTextNodes)
         }
-      }
-      
-      // 处理body
-      const body = doc.body
-      if (body) {
-        collectTextNodes(body)
-      }
-      
-      // 创建原文文本内容的合并版本
-      const allOriginalText = textNodes.map(node => node.textContent.trim()).join(' ')
-      
-      // 如果翻译段落数量明显少于原文，可能需要重新分配
-      if (translatedParagraphs.length < originalParagraphs.length / 2) {
-        // 将翻译文本平均分配到各个节点
-        const avgLength = Math.ceil(cleanedTranslation.length / textNodes.length)
-        let translationIndex = 0
         
-        textNodes.forEach((node, index) => {
-          const start = translationIndex
-          const end = Math.min(start + avgLength, cleanedTranslation.length)
-          const nodeTranslation = cleanedTranslation.substring(start, end).trim()
-          
-          if (nodeTranslation) {
-            node.textContent = nodeTranslation
-            translationIndex = end
-          }
-        })
-      } else {
-        // 使用段落映射方式
-        let paragraphIndex = 0
-        let lastMatchedIndex = -1
+        // 获取元素的纯文本内容
+        const elementText = element.textContent.trim()
         
-        textNodes.forEach(node => {
-          const nodeText = node.textContent.trim()
-          
-          // 查找最匹配的原文段落
-          for (let i = paragraphIndex; i < originalParagraphs.length; i++) {
-            if (originalParagraphs[i].includes(nodeText) || nodeText.includes(originalParagraphs[i])) {
-              if (i < translatedParagraphs.length) {
-                node.textContent = translatedParagraphs[i]
-                lastMatchedIndex = i
-                paragraphIndex = i + 1
-                return
-              }
+        // 查找匹配的原文段落
+        for (let i = paragraphIndex; i < originalParagraphs.length && i < translatedParagraphs.length; i++) {
+          if (elementText.includes(originalParagraphs[i]) || originalParagraphs[i].includes(elementText)) {
+            // 如果元素只包含文本节点，直接替换
+            if (element.children.length === 0) {
+              element.textContent = translatedParagraphs[i]
+              paragraphIndex = i + 1
+              return
+            } else {
+              // 如果包含子元素（如链接），需要更细致的处理
+              replaceTextInElement(element, originalParagraphs[i], translatedParagraphs[i])
+              paragraphIndex = i + 1
+              return
             }
           }
-          
-          // 如果没有找到精确匹配，使用最近的翻译
-          if (lastMatchedIndex >= 0 && lastMatchedIndex < translatedParagraphs.length) {
-            node.textContent = translatedParagraphs[lastMatchedIndex]
-          } else if (paragraphIndex < translatedParagraphs.length) {
-            node.textContent = translatedParagraphs[paragraphIndex]
-            paragraphIndex++
+        }
+      })
+      
+      // 辅助函数：在保留子元素的情况下替换文本
+      function replaceTextInElement(element, originalText, translatedText) {
+        // 遍历所有子节点
+        const childNodes = Array.from(element.childNodes)
+        
+        childNodes.forEach(node => {
+          if (node.nodeType === Node.TEXT_NODE) {
+            const text = node.textContent.trim()
+            if (text && originalText.includes(text)) {
+              // 计算这段文本在原文中的位置比例
+              const startRatio = originalText.indexOf(text) / originalText.length
+              const lengthRatio = text.length / originalText.length
+              
+              // 按比例从翻译文本中提取对应部分
+              const translatedStart = Math.floor(translatedText.length * startRatio)
+              const translatedLength = Math.ceil(translatedText.length * lengthRatio)
+              const translatedPart = translatedText.substring(translatedStart, translatedStart + translatedLength)
+              
+              node.textContent = translatedPart
+            }
           }
         })
       }
       
-      // 序列化回HTML，保持XHTML兼容性
+      // 序列化回HTML
       let resultHtml = new XMLSerializer().serializeToString(doc)
       
       // 确保自闭合标签符合XHTML规范
@@ -762,14 +793,7 @@ document.addEventListener('DOMContentLoaded', function() {
         .replace(/<meta([^>]*)(?<!\/)>/gi, '<meta$1 />')
         .replace(/<link([^>]*)(?<!\/)>/gi, '<link$1 />')
       
-      // 保留原始的XML声明和DOCTYPE
-      if (html.trim().startsWith('<?xml')) {
-        const xmlEnd = html.indexOf('?>') + 2
-        const xmlDeclaration = html.substring(0, xmlEnd)
-        resultHtml = xmlDeclaration + '\n' + resultHtml.replace(/^<\?xml[^>]*>\s*/, '')
-      }
-      
-      return resultHtml
+      return xmlDeclaration + resultHtml
       
     } catch (error) {
       console.error('Error in replaceTextInHtml:', error)

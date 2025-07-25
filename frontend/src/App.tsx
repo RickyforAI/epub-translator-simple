@@ -53,21 +53,23 @@ function App() {
       setIsTranslating(true)
       addLog('info', '开始创建翻译任务...')
       
-      const task = await translationService.createTranslationTask(
+      const result = await translationService.createTranslationTask(
         uploadedFile.id,
         apiConfig,
         isTestMode
       )
       
-      setCurrentTask(task as TranslationTask)
-      addLog('info', `翻译任务已创建: ${task.taskId}${isTestMode ? ' [测试模式]' : ''}`)
+      // 获取完整的任务详情
+      const task = await translationService.getTaskStatus(result.taskId)
+      setCurrentTask(task)
+      addLog('info', `翻译任务已创建: ${result.taskId}${isTestMode ? ' [测试模式]' : ''}`)
       
       if (isTestMode) {
         addLog('info', '测试模式已启用：仅翻译前2章节，每章最多5个片段')
       }
 
       // 订阅进度更新
-      socketService.subscribeToTask(task.taskId, (progress) => {
+      socketService.subscribeToTask(result.taskId, (progress) => {
         setProgress(progress)
         
         if (progress.currentChapter) {
@@ -76,7 +78,7 @@ function App() {
       })
 
       // 监听完成事件
-      socketService.onTaskComplete(task.taskId, (data) => {
+      socketService.onTaskComplete(result.taskId, (data) => {
         addLog('info', '翻译完成！')
         setIsTranslating(false)
         // 触发下载
@@ -84,7 +86,7 @@ function App() {
       })
 
       // 监听错误事件
-      socketService.onTaskError(task.taskId, (error) => {
+      socketService.onTaskError(result.taskId, (error) => {
         addLog('error', `翻译失败: ${error}`)
         setIsTranslating(false)
       })

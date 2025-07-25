@@ -159,7 +159,7 @@ function AppSupabase() {
     <div className="min-h-screen bg-gray-50">
       <div className="container mx-auto p-6 max-w-4xl">
         <h1 className="text-3xl font-bold text-gray-800 mb-8">
-          EPUB 中英翻译器 (Supabase 版)
+          EPUB 中英翻译器 (Supabase 版本)
         </h1>
 
         <div className="space-y-6">

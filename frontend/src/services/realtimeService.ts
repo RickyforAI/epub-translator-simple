@@ -23,7 +23,7 @@ class RealtimeService {
           table: 'translation_tasks',
           filter: `id=eq.${taskId}`
         },
-        (payload) => {
+        (payload: any) => {
           onTaskUpdate(payload.new as TranslationTask)
         }
       )
@@ -35,7 +35,7 @@ class RealtimeService {
           table: 'chapter_translations',
           filter: `task_id=eq.${taskId}`
         },
-        (payload) => {
+        (payload: any) => {
           onChapterUpdate(payload.new as ChapterTranslation)
         }
       )

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import { useState, useEffect } from 'react'
 import { APIConfig, TranslationTask, TranslationProgress, LogEntry } from '@shared/types'
 import { APIConfigPanel } from './components/APIConfigPanel'
 import { FileUploadArea } from './components/FileUploadArea'
@@ -59,7 +59,7 @@ function App() {
         isTestMode
       )
       
-      setCurrentTask(task)
+      setCurrentTask(task as TranslationTask)
       addLog('info', `翻译任务已创建: ${task.taskId}${isTestMode ? ' [测试模式]' : ''}`)
       
       if (isTestMode) {

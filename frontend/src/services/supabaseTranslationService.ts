@@ -9,7 +9,7 @@ export class SupabaseTranslationService {
     const filePath = `uploads/${fileId}/${fileName}`
 
     // 上传到 Supabase Storage
-    const { data, error } = await supabase.storage
+    const { error } = await supabase.storage
       .from('epub-files')
       .upload(filePath, file)
 

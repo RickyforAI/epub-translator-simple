@@ -75,7 +75,8 @@ function AppSupabase() {
       }
 
       // 订阅任务更新
-      const unsubscribe = supabaseTranslationService.subscribeToTask(
+      let unsubscribe: (() => void) | undefined
+      unsubscribe = supabaseTranslationService.subscribeToTask(
         taskId,
         (updatedTask) => {
           // 更新任务状态
@@ -85,7 +86,7 @@ function AppSupabase() {
           const newProgress: TranslationProgress = {
             totalChapters: updatedTask.total_chapters,
             completedChapters: updatedTask.completed_chapters,
-            currentChapter: null,
+            currentChapter: undefined,
             overallProgress: updatedTask.progress
           }
           setProgress(newProgress)
@@ -110,7 +111,9 @@ function AppSupabase() {
       )
 
       // 保存取消订阅函数
-      (window as any).unsubscribeTranslation = unsubscribe
+      if (unsubscribe) {
+        (window as any).unsubscribeTranslation = unsubscribe
+      }
 
     } catch (error) {
       addLog('error', `创建任务失败: ${error instanceof Error ? error.message : '未知错误'}`)
@@ -167,32 +170,14 @@ function AppSupabase() {
           {/* 文件上传 */}
           <FileUploadArea
             onFileUpload={handleFileUpload}
-            isUploading={false}
             uploadedFile={uploadedFile}
+            onStartTranslation={handleStartTranslation}
+            disabled={isTranslating}
+            isTranslating={isTranslating}
+            isTestMode={isTestMode}
+            onTestModeChange={setIsTestMode}
           />
 
-          {/* 翻译控制 */}
-          <div className="bg-white rounded-lg shadow p-6">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-xl font-semibold">翻译控制</h2>
-              <label className="flex items-center space-x-2">
-                <input
-                  type="checkbox"
-                  checked={isTestMode}
-                  onChange={(e) => setIsTestMode(e.target.checked)}
-                  className="rounded text-blue-600"
-                />
-                <span className="text-sm text-gray-600">测试模式</span>
-              </label>
-            </div>
-            <button
-              onClick={handleStartTranslation}
-              disabled={!uploadedFile || !apiConfig.apiKey || isTranslating}
-              className="w-full py-3 px-4 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors"
-            >
-              {isTranslating ? '翻译中...' : '开始翻译'}
-            </button>
-          </div>
 
           {/* 进度显示 */}
           {progress && currentTask && (

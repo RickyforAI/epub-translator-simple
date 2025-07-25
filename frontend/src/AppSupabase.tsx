@@ -84,10 +84,12 @@ function AppSupabase() {
           
           // 更新进度
           const newProgress: TranslationProgress = {
+            taskId: taskId,
+            progress: updatedTask.progress,
+            status: updatedTask.status,
             totalChapters: updatedTask.total_chapters,
             completedChapters: updatedTask.completed_chapters,
-            currentChapter: undefined,
-            overallProgress: updatedTask.progress
+            currentChapter: undefined
           }
           setProgress(newProgress)
 

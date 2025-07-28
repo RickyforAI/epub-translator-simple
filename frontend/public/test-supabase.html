@@ -1,0 +1,537 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>EPUB 翻译器 - Supabase 完整测试</title>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            text-align: center;
+        }
+        .section {
+            margin: 20px 0;
+            padding: 20px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+        }
+        .section h2 {
+            margin-top: 0;
+            color: #555;
+        }
+        input, select {
+            width: 100%;
+            padding: 10px;
+            margin: 5px 0;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            box-sizing: border-box;
+        }
+        button {
+            background: #4CAF50;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+            margin: 5px;
+        }
+        button:hover {
+            background: #45a049;
+        }
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+        .progress {
+            width: 100%;
+            height: 30px;
+            background: #f0f0f0;
+            border-radius: 15px;
+            overflow: hidden;
+            margin: 10px 0;
+        }
+        .progress-bar {
+            height: 100%;
+            background: #4CAF50;
+            width: 0%;
+            transition: width 0.3s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: bold;
+        }
+        .status {
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 5px;
+        }
+        .status.success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        .status.error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        .status.info {
+            background: #d1ecf1;
+            color: #0c5460;
+            border: 1px solid #bee5eb;
+        }
+        .chapter-list {
+            max-height: 300px;
+            overflow-y: auto;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            padding: 10px;
+            margin: 10px 0;
+        }
+        .chapter-item {
+            padding: 10px;
+            margin: 5px 0;
+            background: #f9f9f9;
+            border-radius: 5px;
+            border: 1px solid #eee;
+        }
+        .chapter-item.processing {
+            background: #fff3cd;
+            border-color: #ffeaa7;
+        }
+        .chapter-item.completed {
+            background: #d4edda;
+            border-color: #c3e6cb;
+        }
+        .log-area {
+            background: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 5px;
+            padding: 10px;
+            margin: 10px 0;
+            max-height: 200px;
+            overflow-y: auto;
+            font-family: monospace;
+            font-size: 12px;
+        }
+        .config-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+        }
+        .test-mode-note {
+            background: #fff3cd;
+            border: 1px solid #ffeaa7;
+            color: #856404;
+            padding: 10px;
+            border-radius: 5px;
+            margin: 10px 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>📚 EPUB 翻译器 - Supabase 完整测试</h1>
+        
+        <!-- Supabase 配置 -->
+        <div class="section">
+            <h2>🔧 Supabase 配置</h2>
+            <div class="config-grid">
+                <div>
+                    <label>Project URL:</label>
+                    <input type="text" id="supabaseUrl" value="https://vlmapkkbjrvommnqjwfo.supabase.co" />
+                </div>
+                <div>
+                    <label>Anon Key:</label>
+                    <input type="text" id="supabaseKey" value="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZsbWFwa2tianJ2b21tbnFqd2ZvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3MzU2NTY5OTUsImV4cCI6MjA1MTIzMjk5NX0.O4IB5G3gvFONAeHp6tVAEoSPpF2XmOOmbhXMdJy5y0Y" />
+                </div>
+            </div>
+            <button onclick="initSupabase()">初始化 Supabase</button>
+            <div id="supabaseStatus"></div>
+        </div>
+
+        <!-- API 配置 -->
+        <div class="section">
+            <h2>🔑 API 配置</h2>
+            <div>
+                <label>Moonshot API Key:</label>
+                <input type="text" id="apiKey" placeholder="输入你的 Moonshot API Key" />
+            </div>
+            <div>
+                <label>翻译风格:</label>
+                <select id="style">
+                    <option value="general">通用</option>
+                    <option value="fiction">小说</option>
+                    <option value="science">科技</option>
+                </select>
+            </div>
+            <div>
+                <label>
+                    <input type="checkbox" id="testMode" checked />
+                    测试模式（只翻译前2章）
+                </label>
+            </div>
+            <div class="test-mode-note">
+                ⚠️ 测试模式下只会翻译前2章，每章只翻译前5段。适合快速测试功能是否正常。
+            </div>
+        </div>
+
+        <!-- 文件上传 -->
+        <div class="section">
+            <h2>📁 文件上传</h2>
+            <input type="file" id="fileInput" accept=".epub" />
+            <button onclick="uploadFile()" id="uploadBtn" disabled>上传文件</button>
+            <div id="uploadStatus"></div>
+        </div>
+
+        <!-- 翻译任务 -->
+        <div class="section">
+            <h2>🚀 翻译任务</h2>
+            <button onclick="startTranslation()" id="translateBtn" disabled>开始翻译</button>
+            <button onclick="checkStatus()" id="checkBtn" disabled>检查状态</button>
+            <button onclick="downloadResult()" id="downloadBtn" disabled>下载结果</button>
+            
+            <div class="progress">
+                <div class="progress-bar" id="progressBar">0%</div>
+            </div>
+            
+            <div id="taskStatus"></div>
+            
+            <h3>章节进度:</h3>
+            <div class="chapter-list" id="chapterList"></div>
+        </div>
+
+        <!-- 日志 -->
+        <div class="section">
+            <h2>📋 操作日志</h2>
+            <div class="log-area" id="logArea"></div>
+            <button onclick="clearLogs()">清空日志</button>
+        </div>
+    </div>
+
+    <script>
+        let supabase = null;
+        let currentFileId = null;
+        let currentTaskId = null;
+        let unsubscribe = null;
+
+        // 日志函数
+        function log(message, type = 'info') {
+            const logArea = document.getElementById('logArea');
+            const timestamp = new Date().toLocaleTimeString();
+            const logEntry = `[${timestamp}] ${message}\n`;
+            logArea.textContent += logEntry;
+            logArea.scrollTop = logArea.scrollHeight;
+            console.log(message);
+        }
+
+        function clearLogs() {
+            document.getElementById('logArea').textContent = '';
+        }
+
+        // 初始化 Supabase
+        function initSupabase() {
+            const url = document.getElementById('supabaseUrl').value;
+            const key = document.getElementById('supabaseKey').value;
+            
+            try {
+                supabase = window.supabase.createClient(url, key);
+                showStatus('supabaseStatus', 'Supabase 初始化成功！', 'success');
+                document.getElementById('uploadBtn').disabled = false;
+                log('Supabase 客户端初始化成功');
+            } catch (error) {
+                showStatus('supabaseStatus', `初始化失败: ${error.message}`, 'error');
+                log(`Supabase 初始化失败: ${error.message}`, 'error');
+            }
+        }
+
+        // 显示状态信息
+        function showStatus(elementId, message, type = 'info') {
+            const element = document.getElementById(elementId);
+            element.className = `status ${type}`;
+            element.textContent = message;
+        }
+
+        // 上传文件
+        async function uploadFile() {
+            const fileInput = document.getElementById('fileInput');
+            const file = fileInput.files[0];
+            
+            if (!file) {
+                showStatus('uploadStatus', '请选择文件', 'error');
+                return;
+            }
+
+            if (!file.name.endsWith('.epub')) {
+                showStatus('uploadStatus', '请选择 EPUB 文件', 'error');
+                return;
+            }
+
+            showStatus('uploadStatus', '正在上传...', 'info');
+            log(`开始上传文件: ${file.name}`);
+
+            try {
+                // 生成文件ID
+                currentFileId = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+                const filePath = `uploads/${currentFileId}/${file.name}`;
+
+                // 上传到 Storage
+                const { error } = await supabase.storage
+                    .from('epub-files')
+                    .upload(filePath, file);
+
+                if (error) throw error;
+
+                showStatus('uploadStatus', '文件上传成功！', 'success');
+                document.getElementById('translateBtn').disabled = false;
+                log(`文件上传成功: ${filePath}`);
+            } catch (error) {
+                showStatus('uploadStatus', `上传失败: ${error.message}`, 'error');
+                log(`文件上传失败: ${error.message}`, 'error');
+            }
+        }
+
+        // 开始翻译
+        async function startTranslation() {
+            const apiKey = document.getElementById('apiKey').value;
+            if (!apiKey) {
+                showStatus('taskStatus', '请输入 API Key', 'error');
+                return;
+            }
+
+            const file = document.getElementById('fileInput').files[0];
+            const style = document.getElementById('style').value;
+            const testMode = document.getElementById('testMode').checked;
+
+            showStatus('taskStatus', '正在创建翻译任务...', 'info');
+            log('开始创建翻译任务');
+
+            try {
+                // 创建任务记录
+                const { data, error } = await supabase
+                    .from('translation_tasks')
+                    .insert({
+                        file_id: currentFileId,
+                        file_name: file.name,
+                        file_url: `https://vlmapkkbjrvommnqjwfo.supabase.co/storage/v1/object/public/epub-files/uploads/${currentFileId}/${file.name}`,
+                        file_size: file.size,
+                        status: 'pending',
+                        progress: 0,
+                        total_chapters: 0,
+                        completed_chapters: 0,
+                        api_config: {
+                            style: style,
+                            moonshot_key: apiKey,
+                            test_mode: testMode
+                        }
+                    })
+                    .select()
+                    .single();
+
+                if (error) throw error;
+
+                currentTaskId = data.id;
+                showStatus('taskStatus', '任务创建成功，正在启动翻译...', 'success');
+                log(`任务创建成功: ${currentTaskId}`);
+
+                // 订阅任务更新
+                subscribeToUpdates();
+
+                // 调用 Edge Function
+                const { error: fnError } = await supabase.functions.invoke('process-translation', {
+                    body: { taskId: currentTaskId }
+                });
+
+                if (fnError) {
+                    log(`Edge Function 调用失败: ${fnError.message}`, 'error');
+                }
+
+                document.getElementById('checkBtn').disabled = false;
+            } catch (error) {
+                showStatus('taskStatus', `创建任务失败: ${error.message}`, 'error');
+                log(`创建任务失败: ${error.message}`, 'error');
+            }
+        }
+
+        // 订阅实时更新
+        function subscribeToUpdates() {
+            if (unsubscribe) {
+                unsubscribe();
+            }
+
+            log('订阅任务实时更新');
+
+            // 订阅任务表更新
+            const taskChannel = supabase
+                .channel(`task-${currentTaskId}`)
+                .on(
+                    'postgres_changes',
+                    {
+                        event: 'UPDATE',
+                        schema: 'public',
+                        table: 'translation_tasks',
+                        filter: `id=eq.${currentTaskId}`
+                    },
+                    (payload) => {
+                        log(`任务更新: 状态=${payload.new.status}, 进度=${payload.new.progress}%`);
+                        updateTaskUI(payload.new);
+                    }
+                )
+                .subscribe();
+
+            // 订阅章节表更新
+            const chapterChannel = supabase
+                .channel(`chapters-${currentTaskId}`)
+                .on(
+                    'postgres_changes',
+                    {
+                        event: '*',
+                        schema: 'public',
+                        table: 'chapter_translations',
+                        filter: `task_id=eq.${currentTaskId}`
+                    },
+                    (payload) => {
+                        log(`章节更新: ${payload.new.chapter_title} - ${payload.new.status}`);
+                        updateChapterUI(payload.new);
+                    }
+                )
+                .subscribe();
+
+            unsubscribe = () => {
+                taskChannel.unsubscribe();
+                chapterChannel.unsubscribe();
+            };
+        }
+
+        // 更新任务UI
+        function updateTaskUI(task) {
+            // 更新进度条
+            const progressBar = document.getElementById('progressBar');
+            progressBar.style.width = `${task.progress}%`;
+            progressBar.textContent = `${task.progress}%`;
+
+            // 更新状态
+            let statusText = `状态: ${task.status}`;
+            if (task.total_chapters > 0) {
+                statusText += ` | 章节: ${task.completed_chapters}/${task.total_chapters}`;
+            }
+            showStatus('taskStatus', statusText, 
+                task.status === 'completed' ? 'success' : 
+                task.status === 'failed' ? 'error' : 'info'
+            );
+
+            // 如果完成，启用下载按钮
+            if (task.status === 'completed') {
+                document.getElementById('downloadBtn').disabled = false;
+                log('翻译完成！');
+            }
+        }
+
+        // 更新章节UI
+        function updateChapterUI(chapter) {
+            const chapterList = document.getElementById('chapterList');
+            let chapterDiv = document.getElementById(`chapter-${chapter.id}`);
+            
+            if (!chapterDiv) {
+                chapterDiv = document.createElement('div');
+                chapterDiv.id = `chapter-${chapter.id}`;
+                chapterDiv.className = 'chapter-item';
+                chapterList.appendChild(chapterDiv);
+            }
+
+            chapterDiv.className = `chapter-item ${chapter.status}`;
+            chapterDiv.innerHTML = `
+                <strong>${chapter.chapter_title}</strong><br>
+                状态: ${chapter.status} | 
+                进度: ${chapter.progress || 0}% | 
+                字数: ${chapter.word_count || 0}
+            `;
+        }
+
+        // 检查状态
+        async function checkStatus() {
+            if (!currentTaskId) return;
+
+            try {
+                const { data, error } = await supabase
+                    .from('translation_tasks')
+                    .select('*')
+                    .eq('id', currentTaskId)
+                    .single();
+
+                if (error) throw error;
+
+                updateTaskUI(data);
+                log(`任务状态: ${data.status}, 进度: ${data.progress}%`);
+
+                // 获取章节信息
+                const { data: chapters } = await supabase
+                    .from('chapter_translations')
+                    .select('*')
+                    .eq('task_id', currentTaskId)
+                    .order('chapter_id');
+
+                if (chapters) {
+                    chapters.forEach(updateChapterUI);
+                }
+            } catch (error) {
+                showStatus('taskStatus', `获取状态失败: ${error.message}`, 'error');
+                log(`获取状态失败: ${error.message}`, 'error');
+            }
+        }
+
+        // 下载结果
+        async function downloadResult() {
+            if (!currentTaskId) return;
+
+            showStatus('taskStatus', '正在准备下载...', 'info');
+            log('开始下载翻译结果');
+
+            try {
+                // 获取任务信息
+                const { data: task, error: taskError } = await supabase
+                    .from('translation_tasks')
+                    .select('*')
+                    .eq('id', currentTaskId)
+                    .single();
+
+                if (taskError) throw taskError;
+
+                if (!task.result_url) {
+                    throw new Error('翻译结果还未准备好');
+                }
+
+                // 直接使用 result_url 下载
+                window.open(task.result_url, '_blank');
+                showStatus('taskStatus', '下载已开始', 'success');
+                log('下载链接已打开');
+            } catch (error) {
+                showStatus('taskStatus', `下载失败: ${error.message}`, 'error');
+                log(`下载失败: ${error.message}`, 'error');
+            }
+        }
+
+        // 页面加载时初始化
+        window.onload = function() {
+            log('页面加载完成，请初始化 Supabase');
+        };
+    </script>
+</body>
+</html>

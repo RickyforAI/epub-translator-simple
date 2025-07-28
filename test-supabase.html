@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>测试 Supabase 连接</title>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body>
+    <h1>Supabase 连接测试</h1>
+    <button onclick="testConnection()">测试连接</button>
+    <div id="result"></div>
+
+    <script>
+        const { createClient } = supabase
+        const supabaseUrl = 'https://vlmapkkbjrvommnqjwfo.supabase.co'
+        const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZsbWFwa2tianJ2b21tbnFqd2ZvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTMyNDY5ODYsImV4cCI6MjA2ODgyMjk4Nn0.eM5tvdTl3yxLODG9ib0BKoqRovaYDhwCr7isCuVtdcg'
+        const supabaseClient = createClient(supabaseUrl, supabaseKey)
+
+        async function testConnection() {
+            const resultDiv = document.getElementById('result')
+            
+            try {
+                // 测试数据库连接
+                const { data, error } = await supabaseClient
+                    .from('translation_tasks')
+                    .select('count')
+                    .limit(1)
+                
+                if (error) {
+                    resultDiv.innerHTML = `<p style="color: red;">数据库连接失败: ${error.message}</p>`
+                } else {
+                    resultDiv.innerHTML = `<p style="color: green;">✅ 数据库连接成功！</p>`
+                }
+
+                // 测试存储桶
+                const { data: buckets, error: bucketError } = await supabaseClient.storage.listBuckets()
+                
+                if (!bucketError) {
+                    resultDiv.innerHTML += `<p style="color: green;">✅ 存储桶连接成功！找到 ${buckets.length} 个存储桶</p>`
+                }
+                
+            } catch (err) {
+                resultDiv.innerHTML = `<p style="color: red;">连接失败: ${err.message}</p>`
+            }
+        }
+    </script>
+</body>
+</html>
